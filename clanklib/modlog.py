@@ -129,6 +129,24 @@ def _short_id() -> str:
     return "evt_" + secrets.token_hex(5)
 
 
+def _epoch(value: Any) -> int:
+    """Coerce a timestamp (datetime, epoch float/int, or None) to epoch seconds.
+
+    The data plane returns TIMESTAMPTZ columns as epoch floats, so anything that
+    rebuilds an event from a row must not assume a datetime."""
+    if value is None:
+        return int(time.time())
+    if isinstance(value, (int, float)):
+        return int(value)
+    ts = getattr(value, "timestamp", None)
+    if callable(ts):
+        try:
+            return int(value.timestamp())
+        except Exception:  # noqa: BLE001
+            pass
+    return int(time.time())
+
+
 def _coerce_id(obj: Any) -> Optional[int]:
     """Pull a Discord snowflake id out of a member/user/role/channel/int."""
     if obj is None:
@@ -290,7 +308,7 @@ class ModLogger:
 
     def _event_hash(self, prev: str, event: LogEvent) -> str:
         payload = "|".join(str(x) for x in (
-            prev, event.event_id, int(event.created_at.timestamp()),
+            prev, event.event_id, _epoch(event.created_at),
             event.category.value, event.severity.value, event.event_type,
             event.actor_id or 0, event.target_id or 0, event.summary,
         ))
@@ -498,7 +516,7 @@ class ModLogger:
     def render(self, event: LogEvent) -> discord.ui.LayoutView:
         """Render a Components V2 panel for an event."""
         sev = event.severity
-        ts = int(event.created_at.timestamp())
+        ts = _epoch(event.created_at)
         header = (
             f"## {sev.label} | {event.category.label}\n"
             f"-# {_humanize_type(event.event_type)}  *  <t:{ts}:f>  *  `{event.event_id}`"

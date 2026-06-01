@@ -79,6 +79,20 @@ def test_anomaly_window_fires_once_at_threshold() -> None:
     # The detector fires exactly when n == threshold, so callers compare to it.
 
 
+def test_render_tolerates_float_created_at() -> None:
+    # The data plane returns timestamps as epoch floats; rebuilding an event
+    # from a row (e.g. .modlog case) must not assume a datetime.
+    logger = modlog.ModLogger(bot=None)
+    ev = LogEvent(category=Category.MODERATION, event_type="member.ban", guild_id=1,
+                  severity=Severity.ALERT, target=42, summary="x",
+                  created_at=1_700_000_000.0)
+    view = logger.render(ev)  # must not raise
+    assert isinstance(view, discord.ui.LayoutView)
+    # Hash + epoch helpers also tolerate the float.
+    assert modlog._epoch(1_700_000_000.0) == 1_700_000_000
+    assert len(logger._event_hash("", ev)) == 64
+
+
 def test_render_builds_a_layout_view() -> None:
     ev = LogEvent(category=Category.MODERATION, event_type="member.ban", guild_id=1,
                   severity=Severity.ALERT, target=12345,

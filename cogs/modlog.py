@@ -16,7 +16,7 @@ import discord
 from discord.ext import commands
 
 from clanklib.modlog import (
-    CATEGORY_NAMES, Category, LogEvent, ModLogger, Severity, _name_of,
+    CATEGORY_NAMES, Category, LogEvent, ModLogger, Severity, _epoch, _name_of,
 )
 from clanklib.permissions import ModCog
 from core.framework.components import Container, send_v2
@@ -462,7 +462,7 @@ class ModLog(ModCog):
             return
         lines = []
         for r in rows:
-            ts = int(r["created_at"].timestamp()) if r.get("created_at") else 0
+            ts = _epoch(r.get("created_at"))
             who = f" <@{r['actor_id']}>" if r.get("actor_id") else ""
             tgt = f" -> <@{r['target_id']}>" if r.get("target_id") else ""
             lines.append(

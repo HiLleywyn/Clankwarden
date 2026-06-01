@@ -19,7 +19,7 @@ import discord
 from discord.ext import commands
 
 from core.framework.cogs import GuildCog
-from clanklib.modlog import Severity
+from clanklib.modlog import Severity, _epoch
 from core.framework.components import Container, send_v2
 from core.framework.context import DiscoContext
 from core.framework.ui import C_ERROR, C_INFO, C_SUCCESS, C_WARNING
@@ -370,7 +370,7 @@ class Moderation(GuildCog):
             return
         lines = []
         for r in rows:
-            ts = int(r["created_at"].timestamp()) if r.get("created_at") else 0
+            ts = _epoch(r.get("created_at"))
             lines.append(f"`#{r['id']}` <t:{ts}:d> by <@{r['moderator_id']}> -- {r['reason']}")
         panel = (
             Container(accent_color=C_WARNING)
