@@ -17,7 +17,8 @@
     { "key": "DISCORD_TOKEN", "label": "Discord bot token", "secret": true }
   ],
   "provision": {
-    "database": "postgres"
+    "database": "postgres",
+    "redis": true
   },
   "features": [
     "cogs.meta",
