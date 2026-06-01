@@ -1,0 +1,69 @@
+{
+  "manifest_version": "1",
+  "bot": {
+    "slug": "clanksimus-prime",
+    "name": "Clanksimus Prime",
+    "version": "1.0.0",
+    "description": "Free server backups, templates, chatlogs, sync and containment, rendered in Discord Components V2.",
+    "author": "HiLleywyn",
+    "repo": "hilleywyn/clanksimus-prime"
+  },
+  "channels": ["discord"],
+  "runtime": {
+    "dockerfile": "Dockerfile",
+    "entrypoint": "main.py"
+  },
+  "credentials": [
+    { "key": "DISCORD_TOKEN", "label": "Discord bot token", "secret": true }
+  ],
+  "provision": {
+    "database": "postgres"
+  },
+  "features": [
+    "cogs.meta",
+    "cogs.settings",
+    "cogs.backups",
+    "cogs.templates",
+    "cogs.chatlog",
+    "cogs.sync",
+    "cogs.importexport",
+    "cogs.clank"
+  ],
+  "settings": {
+    "groups": [
+      {
+        "id": "general",
+        "label": "General",
+        "fields": [
+          { "key": "PREFIX", "type": "string", "label": "Command prefix", "default": "." },
+          { "key": "API_PORT", "type": "number", "label": "API / health port", "default": 8080 }
+        ]
+      },
+      {
+        "id": "backups",
+        "label": "Backups",
+        "fields": [
+          { "key": "BACKUP_MAX_PER_USER", "type": "number", "label": "Max backups per user", "default": 50, "min": 1, "max": 1000 }
+        ]
+      },
+      {
+        "id": "api",
+        "label": "REST API",
+        "fields": [
+          { "key": "CLANK_API_KEY", "type": "secret", "label": "API key (enables /api/v2)" }
+        ]
+      },
+      {
+        "id": "containment",
+        "label": "Containment (.clank)",
+        "fields": [
+          { "key": "CLANKER_ROLE_ID", "type": "discord_role", "label": "Clanker role" },
+          { "key": "CLANKTANK_CHANNEL_ID", "type": "discord_channel", "label": "Tank channel" },
+          { "key": "CLANKTANK_LOG_CHANNEL_ID", "type": "discord_channel", "label": "Mod log channel" },
+          { "key": "CLANK_ESCAPE_THREAD_ID", "type": "discord_channel", "label": "Escape-room thread" },
+          { "key": "CLANK_ESCAPE_WAIT_MINUTES", "type": "number", "label": "Reflection wait (minutes)", "default": 8, "min": 1, "max": 120 }
+        ]
+      }
+    ]
+  }
+}
