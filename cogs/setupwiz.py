@@ -58,6 +58,8 @@ class InitView(discord.ui.LayoutView):
         self.created = _Created()
         self.summary_lines: list[str] = []
         self.error: str = ""
+        self.running_detail: str = "Creating roles and channels."
+        self._interaction: discord.Interaction | None = None
         self._rebuild()
 
     # -- guards ---------------------------------------------------------------
@@ -67,6 +69,17 @@ class InitView(discord.ui.LayoutView):
             await interaction.response.send_message("This setup isn't yours.", ephemeral=True)
             return False
         return True
+
+    async def update_running(self, detail: str) -> None:
+        """Live-update the 'running' panel from inside provisioning (best-effort)."""
+        self.running_detail = detail
+        if self.phase != "running" or self._interaction is None:
+            return
+        self._rebuild()
+        try:
+            await self._interaction.edit_original_response(view=self)
+        except Exception:  # noqa: BLE001
+            pass
 
     # -- rendering ------------------------------------------------------------
 
@@ -115,7 +128,7 @@ class InitView(discord.ui.LayoutView):
 
     def _render_running(self) -> None:
         self.add_item(discord.ui.Container(
-            discord.ui.TextDisplay("## Setting things up...\n-# Creating roles and channels."),
+            discord.ui.TextDisplay(f"## Setting things up...\n-# {self.running_detail}"),
             accent_color=C_INFO,
         ))
 
@@ -163,6 +176,8 @@ class InitView(discord.ui.LayoutView):
             await interaction.response.send_message("Select at least one piece first.", ephemeral=True)
             return
         self.phase = "running"
+        self.running_detail = "Creating roles and channels."
+        self._interaction = interaction
         self._rebuild()
         await interaction.response.edit_message(view=self)
         try:
@@ -191,6 +206,8 @@ class InitView(discord.ui.LayoutView):
 
     async def _on_revert(self, interaction: discord.Interaction) -> None:
         self.phase = "running"
+        self.running_detail = "Reverting -- deleting what this run created."
+        self._interaction = interaction
         self._rebuild()
         await interaction.response.edit_message(view=self)
         await self.cog.revert(self)
@@ -344,7 +361,18 @@ class SetupWizard(ModCog):
             await ch.set_permissions(clanker_role, overwrite=deny, reason=reason)
             view.created.locked.append(ch.id)
 
-        result = await BulkRunner(base_delay=0.7).run(targets, _lock_one)
+        total = len(targets)
+        await view.update_running(
+            f"Locking the Clanker role out of {total} channel(s) (paced ~0.7s each, "
+            f"~{max(1, round(total * 0.7 / 60))} min). 0/{total}.")
+
+        async def _prog(res) -> None:
+            await view.update_running(
+                f"Locking the Clanker role out of channels... "
+                f"{res.processed}/{res.total} done.")
+
+        result = await BulkRunner(base_delay=0.7).run(
+            targets, _lock_one, progress=_prog, progress_every=15)
         view.summary_lines.append(
             f"Locked the Clanker role out of {result.succeeded} existing channel(s)"
             + (f" (stopped early: {result.abort_reason})" if result.aborted else "")
