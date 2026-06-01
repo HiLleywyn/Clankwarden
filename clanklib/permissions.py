@@ -60,6 +60,18 @@ FEATURES: tuple[FeaturePerm, ...] = (
         ("manage_roles", "manage_messages", "moderate_members", "ban_members"),
         "Apply the Clanker role, clean up messages, and act on offenders.",
     ),
+    FeaturePerm(
+        "moderation", "Moderation commands",
+        ("kick_members", "ban_members", "moderate_members", "manage_messages",
+         "manage_channels"),
+        "Run ban/kick/timeout/purge/lock and the rest of the mod command set.",
+    ),
+    FeaturePerm(
+        "logging", "Mod logging and audit",
+        ("view_audit_log", "manage_guild"),
+        "Attribute events to the acting moderator and resolve which invite a "
+        "member joined with.",
+    ),
 )
 
 

@@ -37,6 +37,80 @@ class ModLog(ModCog):
         self.logger = ModLogger(bot)
         # Expose for every other cog (settings, clank, mod commands).
         bot.modlog = self.logger
+        # Per-guild snapshot of invite uses, so a join can be attributed to the
+        # invite that incremented: {guild_id: {code: uses}}.
+        self._invite_cache: dict[int, dict[str, int]] = {}
+
+    # -- invite tracking ------------------------------------------------------
+
+    async def _snapshot_invites(self, guild: discord.Guild) -> dict[str, int]:
+        """Read the guild's current invite uses (needs Manage Guild)."""
+        me = guild.me
+        if me is None or not me.guild_permissions.manage_guild:
+            return {}
+        try:
+            invites = await guild.invites()
+        except Exception:  # noqa: BLE001
+            return {}
+        snap = {inv.code: (inv.uses or 0) for inv in invites}
+        try:
+            if "VANITY_URL" in guild.features:
+                vanity = await guild.vanity_invite()
+                if vanity is not None:
+                    snap[vanity.code] = vanity.uses or 0
+        except Exception:  # noqa: BLE001
+            pass
+        return snap
+
+    async def _prime_invites(self, guild: discord.Guild) -> None:
+        self._invite_cache[guild.id] = await self._snapshot_invites(guild)
+
+    async def _detect_join_invite(self, guild: discord.Guild) -> tuple[str | None, int | None]:
+        """Diff current invite uses against the cached snapshot to find the one
+        used for the latest join. Returns ``(code, inviter_id)`` best-effort."""
+        before = self._invite_cache.get(guild.id, {})
+        me = guild.me
+        if me is None or not me.guild_permissions.manage_guild:
+            return None, None
+        try:
+            invites = await guild.invites()
+        except Exception:  # noqa: BLE001
+            return None, None
+        used_code = None
+        inviter_id = None
+        after: dict[str, int] = {}
+        for inv in invites:
+            after[inv.code] = inv.uses or 0
+            if (inv.uses or 0) > before.get(inv.code, 0) and used_code is None:
+                used_code = inv.code
+                inviter_id = inv.inviter.id if inv.inviter else None
+        # A code that vanished (hit its max uses on this join) also counts.
+        if used_code is None:
+            for code, uses in before.items():
+                if code not in after:
+                    used_code = code
+                    break
+        self._invite_cache[guild.id] = after
+        return used_code, inviter_id
+
+    @commands.Cog.listener()
+    async def on_ready(self) -> None:
+        for guild in self.bot.guilds:
+            await self._prime_invites(guild)
+
+    @commands.Cog.listener()
+    async def on_guild_join(self, guild: discord.Guild) -> None:
+        await self._prime_invites(guild)
+
+    @commands.Cog.listener()
+    async def on_invite_create(self, invite: discord.Invite) -> None:
+        if invite.guild is not None:
+            await self._prime_invites(invite.guild)  # type: ignore[arg-type]
+
+    @commands.Cog.listener()
+    async def on_invite_delete(self, invite: discord.Invite) -> None:
+        if invite.guild is not None:
+            await self._prime_invites(invite.guild)  # type: ignore[arg-type]
 
     # -- audit-log actor enrichment -------------------------------------------
 
@@ -66,11 +140,23 @@ class ModLog(ModCog):
         if member.guild is None:
             return
         created = int(member.created_at.timestamp())
+        code, inviter_id = await self._detect_join_invite(member.guild)
+        meta: dict[str, str] = {
+            "account_created": f"<t:{created}:R>",
+            "bot": "yes" if member.bot else "no",
+        }
+        if code:
+            meta["invite_code"] = f"`{code}`"
+        if inviter_id:
+            meta["invited_by"] = f"<@{inviter_id}>"
+        if code and not inviter_id:
+            meta["source"] = "vanity or widget invite"
+        elif not code:
+            meta["source"] = "unknown (bot lacks Manage Server, or a one-time/expired invite)"
         await self.logger.member(
             "member.join", member.guild.id, target=member,
             summary=f"{member.mention} joined the server.",
-            metadata={"account_created": f"<t:{created}:R>",
-                      "bot": "yes" if member.bot else "no"},
+            metadata=meta,
         )
 
     @commands.Cog.listener()
@@ -293,7 +379,8 @@ class ModLog(ModCog):
             .text(
                 f"-# `{ctx.prefix}modlog channel #ch` set default  *  "
                 f"`route <category> #ch`  *  `mute/unmute <category>`  *  "
-                f"`timeline [@user]`  *  `stats [hours]`  *  `prune <days>`  *  `test`\n"
+                f"`timeline [@user]`  *  `case <evt_id>`  *  `stats [hours]`  *  "
+                f"`prune <days>`  *  `test`\n"
                 f"-# Categories: {', '.join(CATEGORY_NAMES)}"
             )
         )
@@ -388,6 +475,59 @@ class ModLog(ModCog):
             .text(f"-# Showing {len(rows)} most recent. Filter by member: `{ctx.prefix}modlog timeline @user`.")
         )
         await send_v2(ctx, panel)
+
+    @modlog_grp.command(name="case", aliases=["lookup", "view", "ref"])
+    async def modlog_case(self, ctx: DiscoContext, reference: str) -> None:
+        """Look up one event by its reference id (`evt_...`) or row number."""
+        if self.db is None:
+            await self._err(ctx, "Mod-log storage is unavailable.")
+            return
+        ref = reference.strip().strip("`#")
+        if ref.lower().startswith("evt_"):
+            row = await self.db.fetch_one(
+                "SELECT * FROM mod_log_events WHERE guild_id=$1 AND event_id=$2",
+                ctx.guild.id, ref.lower())
+        elif ref.isdigit():
+            row = await self.db.fetch_one(
+                "SELECT * FROM mod_log_events WHERE guild_id=$1 AND id=$2",
+                ctx.guild.id, int(ref))
+        else:
+            await send_v2(ctx, Container(accent_color=C_ERROR).text(
+                "Give an event reference like `evt_ab12cd34` or a row number."))
+            return
+        if row is None:
+            await send_v2(ctx, Container(accent_color=C_ERROR).text(
+                f"No event matching `{reference}` in this server."))
+            return
+        # Rebuild a LogEvent from the row and reuse the standard renderer.
+        from clanklib.modlog import Category, LogEvent, Severity
+        ev = LogEvent(
+            category=Category(row["category"]),
+            event_type=row["event_type"], guild_id=int(row["guild_id"]),
+            severity=Severity(row["severity"]),
+            actor=int(row["actor_id"]) if row.get("actor_id") else None,
+            target=int(row["target_id"]) if row.get("target_id") else None,
+            channel=int(row["channel_id"]) if row.get("channel_id") else None,
+            summary=row.get("summary") or "",
+            metadata=self._decode_meta(row.get("metadata")),
+            event_id=row["event_id"], created_at=row["created_at"],
+        )
+        await ctx.reply(view=self.logger.render(ev), mention_author=False)
+
+    @staticmethod
+    def _decode_meta(raw) -> dict:
+        import json
+        if isinstance(raw, dict):
+            return raw
+        if isinstance(raw, str):
+            try:
+                return json.loads(raw)
+            except (TypeError, ValueError):
+                return {}
+        return {}
+
+    async def _err(self, ctx: DiscoContext, msg: str) -> None:
+        await send_v2(ctx, Container(accent_color=C_ERROR).text(msg))
 
     @modlog_grp.command(name="stats")
     async def modlog_stats(self, ctx: DiscoContext, hours: int = 24) -> None:
