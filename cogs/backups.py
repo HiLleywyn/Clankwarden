@@ -8,7 +8,6 @@ only guards against runaway storage.
 """
 from __future__ import annotations
 
-import os
 import re
 import secrets
 
@@ -20,9 +19,9 @@ from core.framework.components import Container, send_v2
 from core.framework.context import DiscoContext
 from core.framework.ui import C_ERROR, C_GOLD, C_INFO, C_SUCCESS, fmt_ts
 from clanklib import serializer
+from clanklib.settings import prefix as _prefix, setting_int
 from cogs._ui import confirm_v2
 
-_MAX_PER_USER = int(os.getenv("BACKUP_MAX_PER_USER", "50"))
 _ID_RE = re.compile(r"^[0-9a-f]{8}$")
 
 
@@ -51,10 +50,11 @@ class Backups(GuildCog):
         """Create a backup. Add ``chatlog`` or ``chatlog:100`` to also archive
         recent messages per channel."""
         count = await self.db.backups.count_for_owner(ctx.author.id)
-        if count >= _MAX_PER_USER:
+        max_per_user = setting_int(self.bot, "BACKUP_MAX_PER_USER", 50)
+        if count >= max_per_user:
             await send_v2(ctx, Container(accent_color=C_ERROR).text(
                 f"## Backup limit reached\nYou have {count} backups (max "
-                f"{_MAX_PER_USER}). Delete one with `{self._p()}backup delete <id>`."))
+                f"{max_per_user}). Delete one with `{self._p()}backup delete <id>`."))
             return
 
         msg_limit = 0
@@ -221,8 +221,7 @@ class Backups(GuildCog):
     # ── helpers ───────────────────────────────────────────────────────────────
 
     def _p(self) -> str:
-        from core.config import Config
-        return Config.PREFIX or "."
+        return _prefix(self.bot)
 
     async def _owned(self, ctx: DiscoContext, backup_id: str):  # type: ignore[no-untyped-def]
         if not _ID_RE.match(backup_id.lower()):

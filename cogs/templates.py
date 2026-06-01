@@ -12,6 +12,7 @@ from core.framework.components import Container, send_v2
 from core.framework.context import DiscoContext
 from core.framework.ui import C_ERROR, C_GOLD, C_INFO, C_SUCCESS, fmt_ts
 from clanklib import serializer
+from clanklib.settings import prefix as _prefix
 from cogs._ui import confirm_v2
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
@@ -119,8 +120,7 @@ class Templates(GuildCog):
         await send_v2(ctx, Container(accent_color=color).text(text))
 
     def _p(self) -> str:
-        from core.config import Config
-        return Config.PREFIX or "."
+        return _prefix(self.bot)
 
 
 async def setup(bot: commands.Bot) -> None:

@@ -4,11 +4,11 @@ from __future__ import annotations
 import discord
 from discord.ext import commands
 
-from core.config import Config
 from core.framework.cogs import GuildCog
 from core.framework.components import Container, send_v2
 from core.framework.context import DiscoContext
 from core.framework.ui import C_ERROR, C_INFO, C_SUCCESS
+from clanklib.settings import prefix as _prefix
 
 
 def _chan(guild: discord.Guild, cid) -> str:
@@ -23,7 +23,7 @@ class Settings(GuildCog):
     @commands.has_guild_permissions(manage_guild=True)
     async def settings_cmd(self, ctx: DiscoContext) -> None:
         s = await self.db.get_guild_settings(ctx.guild.id)
-        p = Config.PREFIX or "."
+        p = _prefix(self.bot)
         panel = (
             Container(accent_color=C_INFO)
             .text(f"## Settings for {ctx.guild.name}")
