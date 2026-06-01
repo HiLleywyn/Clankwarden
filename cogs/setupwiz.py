@@ -17,17 +17,19 @@ from __future__ import annotations
 import discord
 from discord.ext import commands
 
+from clanklib.modlog import Category as _ModCategory
 from clanklib.permissions import ModCog
 from core.framework.context import DiscoContext
 from core.framework.ui import C_ERROR, C_INFO, C_NAVY, C_SUCCESS
 
 # Each piece the wizard can provision: key -> (label, description).
 PIECES: dict[str, tuple[str, str]] = {
-    "containment": ("Containment (.clank)",
-                    "Clanker role, a Containment category, #clanktank, #clanker-log and an escape thread."),
-    "logging": ("Moderation logging", "A #mod-log channel for the categorized audit log."),
-    "alerts": ("Realtime alerts", "A #mod-alerts channel for ALERT/CRITICAL escalations."),
-    "hunters": ("Clanker hunters", "A #scam-reports channel hunters post in."),
+    "containment": ("Clanktank",
+                    "A Clanktank category holding the tank, its escape-room thread and clank logs; "
+                    "plus the Clanker role, locked out of every other channel."),
+    "modlogs": ("Mod logs",
+                "A Mod Logs category with one mod/admin-only channel per log category "
+                "(security, moderation, member, message, ...), each auto-routed."),
 }
 DEFAULT_PIECES = tuple(PIECES.keys())
 
@@ -261,12 +263,12 @@ class SetupWizard(ModCog):
                 view.summary_lines.append(f"Reused existing role {clanker_role.mention}")
             await self._set(view, "clanker_role", clanker_role.id)
 
-            # Containment category: clankers can't see it; the tank re-grants view.
+            # Clanktank category: clankers can't see it; the tank re-grants view.
             cat_overwrites = {clanker_role: hide}
             if me is not None:
                 cat_overwrites[me] = staff_view
             category = await guild.create_category(
-                "Containment", overwrites=cat_overwrites, reason=reason)
+                "Clanktank", overwrites=cat_overwrites, reason=reason)
             view.created.channels.append(category.id)
             view.summary_lines.append(f"Created category **{category.name}**")
             await self._set(view, "clank_category", category.id)
@@ -283,11 +285,11 @@ class SetupWizard(ModCog):
             await self._set(view, "clanktank_channel", tank.id)
 
             clog = await guild.create_text_channel(
-                "clanker-log", category=category, reason=reason,
+                "clank-logs", category=category, reason=reason,
                 overwrites={guild.default_role: hide, clanker_role: hide,
                             **({me: staff_view} if me else {})})
             view.created.channels.append(clog.id)
-            view.summary_lines.append(f"Created {clog.mention} (containment log)")
+            view.summary_lines.append(f"Created {clog.mention} (clank logs)")
             await self._set(view, "clanktank_log_channel", clog.id)
 
             # Escape-room thread lives off the tank channel.
@@ -306,29 +308,78 @@ class SetupWizard(ModCog):
             # Clanker) can only see the tank. Paced so a big server can't 429 us.
             await self._lock_clanker_out(view, clanker_role, keep_category=category)
 
-        if "logging" in sel:
-            modlog_ch = await guild.create_text_channel(
-                "mod-log", category=category, reason=reason,
-                overwrites={guild.default_role: hide, **({me: staff_view} if me else {})})
-            view.created.channels.append(modlog_ch.id)
-            view.summary_lines.append(f"Created {modlog_ch.mention} (mod log)")
-            await self._set(view, "mod_log_channel", modlog_ch.id)
+        if "modlogs" in sel:
+            # Mod Logs category: mod/admin only. Deny @everyone View on the
+            # category; child channels are created synced, so they inherit it.
+            mod_ov = {guild.default_role: hide}
+            if me is not None:
+                mod_ov[me] = staff_view
+            mod_cat = await guild.create_category(
+                "Mod Logs", overwrites=mod_ov, reason=reason)
+            view.created.channels.append(mod_cat.id)
+            view.summary_lines.append(f"Created category **{mod_cat.name}** (mod/admin only)")
 
-        if "alerts" in sel:
-            alert_ch = await guild.create_text_channel(
-                "mod-alerts", category=category, reason=reason,
-                overwrites={guild.default_role: hide, **({me: staff_view} if me else {})})
-            view.created.channels.append(alert_ch.id)
-            view.summary_lines.append(f"Created {alert_ch.mention} (alerts)")
-            await self._set(view, "modlog_alert_channel", alert_ch.id)
+            # One channel per mod-log category, each auto-routed.
+            await view.update_running("Creating the per-category mod-log channels...")
+            routes: dict[str, int] = {}
+            for cat in _ModCategory:
+                ch = await guild.create_text_channel(
+                    f"log-{cat.value}", category=mod_cat, reason=reason)
+                view.created.channels.append(ch.id)
+                routes[cat.value] = ch.id
+            await self._set(view, "modlog_routes", routes)
+            # Default destination for anything not explicitly routed.
+            await self._set(view, "mod_log_channel", routes.get("moderation"))
+            view.summary_lines.append(
+                f"Created {len(routes)} routed mod-log channels under **Mod Logs**")
 
-        if "hunters" in sel:
-            report_ch = await guild.create_text_channel(
-                "scam-reports", category=category, reason=reason,
-                overwrites={**({me: staff_view} if me else {})})
-            view.created.channels.append(report_ch.id)
-            view.summary_lines.append(f"Created {report_ch.mention} (hunter reports)")
-            await self._set(view, "scam_report_channel", report_ch.id)
+    async def _lock_clanker_out(self, view: InitView, clanker_role: discord.Role,
+                                *, keep_category: discord.CategoryChannel | None) -> None:
+        """Deny the Clanker role View Channel on every existing channel except
+        the containment category we just made, paced to avoid rate limits."""
+        from clanklib.ratelimit import BulkRunner
+
+        keep_ids = set()
+        if keep_category is not None:
+            keep_ids.add(keep_category.id)
+            keep_ids.update(c.id for c in keep_category.channels)
+
+        deny = discord.PermissionOverwrite(view_channel=False)
+        reason = f"Clanksimus .init: lock Clanker out (by {view.ctx.author})"
+
+        # Only touch categories and channels that aren't already synced to a
+        # category we'll handle -- minimizes API calls on big servers.
+        targets: list[discord.abc.GuildChannel] = []
+        for ch in view.guild.channels:
+            if ch.id in keep_ids:
+                continue
+            if isinstance(ch, discord.CategoryChannel):
+                targets.append(ch)
+            elif getattr(ch, "permissions_synced", False):
+                continue  # inherits its category's overwrite
+            else:
+                targets.append(ch)
+
+        async def _lock_one(ch: discord.abc.GuildChannel) -> None:
+            await ch.set_permissions(clanker_role, overwrite=deny, reason=reason)
+            view.created.locked.append(ch.id)
+
+        total = len(targets)
+        await view.update_running(
+            f"Locking the Clanker role out of {total} channel(s) (paced ~0.7s each, "
+            f"~{max(1, round(total * 0.7 / 60))} min). 0/{total}.")
+
+        async def _prog(res) -> None:
+            await view.update_running(
+                f"Locking the Clanker role out of channels... "
+                f"{res.processed}/{res.total} done.")
+
+        result = await BulkRunner(base_delay=0.7).run(
+            targets, _lock_one, progress=_prog, progress_every=15)
+        view.summary_lines.append(
+            f"Locked the Clanker role out of {result.succeeded} existing channel(s)"
+            + (f" (stopped early: {result.abort_reason})" if result.aborted else "")
+        )
 
     async def _lock_clanker_out(self, view: InitView, clanker_role: discord.Role,
                                 *, keep_category: discord.CategoryChannel | None) -> None:
