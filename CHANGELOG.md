@@ -3,6 +3,7 @@
 ## [main] -- 2026-06-01
 
 ### New Features
+- **Per-guild settings API**: A key-protected REST surface (`/api/v2/guilds/{id}/settings`, with a `/schema` endpoint) to read and update each server's config (prefix, log + containment channels) from outside Discord, sharing one validated schema with the `.set` command.
 - **Live settings**: Configuration changes made in the Sojourns control panel
   now take effect immediately, without a redeploy. Cogs read runtime config
   (prefix, backup cap, API key, client id) from the live settings layer rather
