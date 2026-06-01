@@ -34,6 +34,28 @@
 - Installation quick-start, full configuration reference and a complete command
   reference.
 
+### Moderation logging
+- **Comprehensive mod log**: A new centralized logger (`bot.modlog`) records
+  every tracked event under one standardized schema (short event id, UTC
+  timestamp, category, severity, actor, target, channel, summary, metadata)
+  and renders it as a Components V2 panel. Categories: security, moderation,
+  member, message, role, channel, command, configuration, AI, infrastructure,
+  clanktank, analytics.
+- **Event coverage**: member join/leave, bans/unbans, timeouts, role and
+  nickname changes, role create/delete/update (with permission deltas),
+  channel create/delete, and message delete/edit/bulk-delete are all logged,
+  with the acting moderator attributed from the audit log where available.
+- **Configuration changes are now logged**: every `.set` change (and the
+  `.modlog` routing changes) records a configuration event, so channel/role
+  config edits are auditable.
+- **Operator controls**: `.modlog` shows the current routing and 24h stats;
+  `.modlog channel`, `.modlog route <category> #ch`, `.modlog mute/unmute
+  <category>`, `.modlog timeline [@user]`, `.modlog stats [hours]`,
+  `.modlog prune <days>` and `.modlog test`. Muted categories are still
+  recorded for the timeline.
+- Per-category log routing and a default mod log channel, configurable in both
+  Discord and the Sojourns web UI.
+
 ### Changes
 - Components V2 is the default UI across every command.
 - Templated for Sojourns via `sojourns.json` (validated in CI).

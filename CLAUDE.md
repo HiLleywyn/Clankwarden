@@ -34,7 +34,14 @@ feature genuinely requires one (there are currently none). This needs
   Sojourns control plane reads the same file. Validate with
   `python -m core.framework.manifest sojourns.json`.
 - `cogs/` -- features. `clank.py` is the ported containment subset (group
-  `.clank`, alias `.clanker`); the rest are the Components V2 server tools.
+  `.clank`, alias `.clanker`); `modlog.py` is the comprehensive mod-logging cog
+  (gateway listeners + `.modlog` controls); the rest are the Components V2
+  server tools.
+- `clanklib/modlog.py` -- the centralized `ModLogger` (hung off the bot as
+  `bot.modlog`). Every cog routes events through it (`modlog.security(...)`,
+  `.mod(...)`, `.member(...)`, `.config(...)` ...); it persists to
+  `mod_log_events` and renders Components V2 panels. New event sources should
+  go through it, not ad-hoc channel sends.
 - `services/serializer.py` -- guild <-> JSON (the engine behind backups +
   templates). Pure serialize; explicit `RestoreOptions` for the destructive
   restore path.
