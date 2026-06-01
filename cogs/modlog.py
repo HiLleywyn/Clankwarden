@@ -364,12 +364,15 @@ class ModLog(ModCog):
         route_lines = "\n".join(
             f"- `{cat}` -> {_chan(ctx.guild, cid)}" for cat, cid in routes.items()
         ) or "_none (all use the default channel)_"
+        incident = "ON" if s.get("modlog_incident") else "OFF"
         panel = (
             Container(accent_color=C_NAVY)
             .text("## Moderation Log")
             .text(
                 f"**Default channel**  {_chan(ctx.guild, s.get('mod_log_channel'))}\n"
-                f"**Muted categories**  {', '.join(muted) if muted else 'none'}"
+                f"**Alert channel**  {_chan(ctx.guild, s.get('modlog_alert_channel'))}\n"
+                f"**Muted categories**  {', '.join(muted) if muted else 'none'}\n"
+                f"**Incident mode**  {incident}"
             )
             .separator()
             .text("### Per-category routes\n" + route_lines)
@@ -380,7 +383,8 @@ class ModLog(ModCog):
                 f"-# `{ctx.prefix}modlog channel #ch` set default  *  "
                 f"`route <category> #ch`  *  `mute/unmute <category>`  *  "
                 f"`timeline [@user]`  *  `case <evt_id>`  *  `stats [hours]`  *  "
-                f"`prune <days>`  *  `test`\n"
+                f"`prune <days>`  *  `verify`  *  `alert channel/role`  *  "
+                f"`incident on/off`  *  `test`\n"
                 f"-# Categories: {', '.join(CATEGORY_NAMES)}"
             )
         )
@@ -562,6 +566,70 @@ class ModLog(ModCog):
         )
         await send_v2(ctx, Container(accent_color=C_SUCCESS).text(
             f"Removed {n} event(s) older than {days} day(s)."))
+
+    @modlog_grp.command(name="verify", aliases=["audit", "integrity"])
+    async def modlog_verify(self, ctx: DiscoContext) -> None:
+        """Walk the tamper-evident hash chain and report any break."""
+        res = await self.logger.verify_chain(ctx.guild.id)
+        if res["ok"]:
+            await send_v2(ctx, Container(accent_color=C_SUCCESS).text(
+                f"## Audit integrity verified\n"
+                f"-# {res['checked']} event(s) form an unbroken hash chain. "
+                f"No row has been altered or deleted out of band."))
+        else:
+            await send_v2(ctx, Container(accent_color=C_ERROR).text(
+                f"## Audit integrity BROKEN\n"
+                f"The chain breaks at event `{res['broken_at']}` "
+                f"(row {res.get('row_id')}) after {res['checked']} good event(s). "
+                f"A record was altered or removed outside the bot."))
+
+    @modlog_grp.group(name="alert", invoke_without_command=True)
+    async def modlog_alert(self, ctx: DiscoContext) -> None:
+        s = await self.db.get_guild_settings(ctx.guild.id)
+        role_id = s.get("modlog_alert_role")
+        role = ctx.guild.get_role(int(role_id)) if role_id else None
+        await send_v2(ctx, Container(accent_color=C_INFO).text(
+            "## Realtime alerts\n"
+            f"**Alert channel**  {_chan(ctx.guild, s.get('modlog_alert_channel'))}\n"
+            f"**Alert role**  {role.mention if role else '_not set_'}\n"
+            f"-# ALERT/CRITICAL events (and everything during an incident) are "
+            f"mirrored here. Set with `{ctx.prefix}modlog alert channel #ch` and "
+            f"`{ctx.prefix}modlog alert role @role`."))
+
+    @modlog_alert.command(name="channel")
+    async def modlog_alert_channel(self, ctx: DiscoContext, channel: discord.TextChannel | None = None) -> None:
+        await self.db.update_guild_setting(ctx.guild.id, "modlog_alert_channel",
+                                           channel.id if channel else None)
+        await self._ok(ctx, f"Alert channel {'set to ' + channel.mention if channel else 'cleared'}.")
+
+    @modlog_alert.command(name="role")
+    async def modlog_alert_role(self, ctx: DiscoContext, role: discord.Role | None = None) -> None:
+        await self.db.update_guild_setting(ctx.guild.id, "modlog_alert_role",
+                                           role.id if role else None)
+        await self._ok(ctx, f"Alert role {'set to ' + role.mention if role else 'cleared'}.")
+
+    @modlog_grp.command(name="incident")
+    async def modlog_incident(self, ctx: DiscoContext, state: str = "") -> None:
+        """Turn incident mode on/off: unmute every category and mirror all to alerts."""
+        state = state.lower().strip()
+        if state not in ("on", "off"):
+            s = await self.db.get_guild_settings(ctx.guild.id)
+            cur = "ON" if s.get("modlog_incident") else "OFF"
+            await send_v2(ctx, Container(accent_color=C_INFO).text(
+                f"Incident mode is **{cur}**. Use `{ctx.prefix}modlog incident on` or `off`."))
+            return
+        on = state == "on"
+        await self.db.update_guild_setting(ctx.guild.id, "modlog_incident", on)
+        from clanklib.modlog import Severity
+        await self.logger.config(
+            "config.incident", ctx.guild.id, actor=ctx.author,
+            severity=Severity.ALERT if on else Severity.NOTICE,
+            summary=f"Incident mode turned {'ON' if on else 'OFF'}.")
+        await self._ok(ctx, f"Incident mode **{'ON' if on else 'OFF'}**."
+                            + (" Every category now mirrors to the alert channel." if on else ""))
+
+    async def _ok(self, ctx: DiscoContext, msg: str) -> None:
+        await send_v2(ctx, Container(accent_color=C_SUCCESS).text(msg))
 
     @modlog_grp.command(name="test")
     async def modlog_test(self, ctx: DiscoContext) -> None:

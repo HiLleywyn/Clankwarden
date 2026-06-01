@@ -67,6 +67,18 @@
   recorded for the timeline.
 - Per-category log routing and a default mod log channel, configurable in both
   Discord and the Sojourns web UI.
+- **Tamper-evident audit chain**: every event stores the hash of the previous
+  event plus its own; `.modlog verify` walks the chain and reports the first
+  break (an altered or deleted row).
+- **Realtime alerts**: ALERT/CRITICAL events (and everything during an incident)
+  are mirrored to a configurable alert channel with an optional role ping
+  (`.modlog alert channel/role`).
+- **Anomaly detection**: join floods (raids), mass-ban bursts and message-purge
+  bursts trip a CRITICAL security event automatically.
+- **Incident mode** (`.modlog incident on/off`): unmutes every category and
+  mirrors all events to the alert channel for the duration of a situation.
+- **Invite attribution**: member-join events record the invite code and who
+  invited them (best-effort, needs Manage Server).
 
 ### Changes
 - Components V2 is the default UI across every command.

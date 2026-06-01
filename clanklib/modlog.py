@@ -30,9 +30,12 @@ All ASCII; no embeds.
 """
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
 import logging
 import secrets
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -189,6 +192,22 @@ class ModLogger:
 
     def __init__(self, bot: Any) -> None:
         self.bot = bot
+        # Tamper-evident hash chain: the latest hash per guild, plus a per-guild
+        # lock so concurrent persists chain in a defined order.
+        self._chain_tip: dict[int, str] = {}
+        self._chain_lock: dict[int, "asyncio.Lock"] = {}
+        # Anomaly detection: sliding windows of recent event timestamps, keyed by
+        # (guild_id, bucket). Bucket is a coarse signal like "join" or
+        # "mod:<actor_id>"; a burst trips a security anomaly + alert.
+        self._windows: dict[tuple, list[float]] = {}
+
+    def _lock_for(self, guild_id: int) -> "asyncio.Lock":
+        lock = self._chain_lock.get(guild_id)
+        if lock is None:
+            import asyncio as _asyncio
+            lock = _asyncio.Lock()
+            self._chain_lock[guild_id] = lock
+        return lock
 
     @property
     def db(self) -> Any:
@@ -244,6 +263,12 @@ class ModLogger:
         """Dispatch a pre-built event (persist + post). Never raises."""
         await self._persist(event)
         await self._dispatch(event)
+        # Anomaly detection runs after the event is recorded so the anomaly
+        # itself is anchored after its triggering events in the chain.
+        try:
+            await self._detect_anomaly(event)
+        except Exception:  # noqa: BLE001
+            log.debug("modlog anomaly check failed", exc_info=True)
         return event
 
     # -- internals ------------------------------------------------------------
@@ -263,39 +288,169 @@ class ModLogger:
         )
         return await self.emit(event)
 
+    def _event_hash(self, prev: str, event: LogEvent) -> str:
+        payload = "|".join(str(x) for x in (
+            prev, event.event_id, int(event.created_at.timestamp()),
+            event.category.value, event.severity.value, event.event_type,
+            event.actor_id or 0, event.target_id or 0, event.summary,
+        ))
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    async def _chain_tip_for(self, db: Any, guild_id: int) -> str:
+        """The latest hash in a guild's chain (cached; seeded from the DB)."""
+        if guild_id in self._chain_tip:
+            return self._chain_tip[guild_id]
+        try:
+            row = await db.fetch_one(
+                "SELECT hash FROM mod_log_events WHERE guild_id=$1 AND hash IS NOT NULL "
+                "ORDER BY id DESC LIMIT 1", guild_id)
+            tip = (row or {}).get("hash") or ""
+        except Exception:  # noqa: BLE001
+            tip = ""
+        self._chain_tip[guild_id] = tip
+        return tip
+
     async def _persist(self, event: LogEvent) -> None:
         db = self.db
         if db is None:
             return
-        try:
-            meta = json.dumps(event.metadata)[:_METADATA_BYTES_MAX]
-            await db.execute(
-                "INSERT INTO mod_log_events "
-                "(event_id, guild_id, created_at, category, severity, event_type, "
-                " actor_id, target_id, channel_id, summary, metadata) "
-                "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb) "
-                "ON CONFLICT (guild_id, event_id) DO NOTHING",
-                event.event_id, event.guild_id, event.created_at,
-                event.category.value, event.severity.value, event.event_type,
-                event.actor_id, event.target_id, event.channel_id,
-                event.summary, meta,
+        async with self._lock_for(event.guild_id):
+            try:
+                prev = await self._chain_tip_for(db, event.guild_id)
+                digest = self._event_hash(prev, event)
+                meta = json.dumps(event.metadata)[:_METADATA_BYTES_MAX]
+                await db.execute(
+                    "INSERT INTO mod_log_events "
+                    "(event_id, guild_id, created_at, category, severity, event_type, "
+                    " actor_id, target_id, channel_id, summary, metadata, prev_hash, hash) "
+                    "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13) "
+                    "ON CONFLICT (guild_id, event_id) DO NOTHING",
+                    event.event_id, event.guild_id, event.created_at,
+                    event.category.value, event.severity.value, event.event_type,
+                    event.actor_id, event.target_id, event.channel_id,
+                    event.summary, meta, prev, digest,
+                )
+                self._chain_tip[event.guild_id] = digest
+            except Exception:  # noqa: BLE001
+                log.debug("modlog persist failed", exc_info=True)
+
+    async def verify_chain(self, guild_id: int, limit: int = 5000) -> dict:
+        """Walk the hash chain in order and report the first break, if any."""
+        db = self.db
+        if db is None:
+            return {"ok": True, "checked": 0, "broken_at": None}
+        rows = await db.fetch_all(
+            "SELECT id, event_id, created_at, category, severity, event_type, "
+            "actor_id, target_id, summary, prev_hash, hash "
+            "FROM mod_log_events WHERE guild_id=$1 AND hash IS NOT NULL "
+            "ORDER BY id ASC LIMIT $2", int(guild_id), int(limit))
+        prev = ""
+        checked = 0
+        for r in rows:
+            ev = LogEvent(
+                category=Category(r["category"]), event_type=r["event_type"],
+                guild_id=int(guild_id), severity=Severity(r["severity"]),
+                actor=int(r["actor_id"]) if r.get("actor_id") else None,
+                target=int(r["target_id"]) if r.get("target_id") else None,
+                summary=r.get("summary") or "", event_id=r["event_id"],
+                created_at=r["created_at"],
             )
-        except Exception:  # noqa: BLE001
-            log.debug("modlog persist failed", exc_info=True)
+            expected = self._event_hash(prev, ev)
+            if r.get("prev_hash") != prev or r.get("hash") != expected:
+                return {"ok": False, "checked": checked,
+                        "broken_at": r["event_id"], "row_id": r["id"]}
+            prev = r["hash"]
+            checked += 1
+        return {"ok": True, "checked": checked, "broken_at": None}
 
     async def _dispatch(self, event: LogEvent) -> None:
         try:
-            if await self._is_muted(event.guild_id, event.category):
-                return
-            channel = await self._resolve_channel(event.guild_id, event.category)
-            if channel is None:
-                return
-            view = self.render(event)
-            await channel.send(view=view)
-        except discord.Forbidden:
-            log.debug("modlog: missing permission to post in log channel g=%s", event.guild_id)
+            s = await self._guild_settings(event.guild_id)
+            incident = bool(s.get("modlog_incident"))
+            # Incident mode forces every category through (nothing stays muted)
+            # so the full picture is visible during an active situation.
+            if not incident and await self._is_muted(event.guild_id, event.category):
+                pass  # still falls through to alert escalation below
+            else:
+                channel = await self._resolve_channel(event.guild_id, event.category)
+                if channel is not None:
+                    try:
+                        await channel.send(view=self.render(event))
+                    except discord.Forbidden:
+                        log.debug("modlog: missing perms in log channel g=%s", event.guild_id)
+            # Realtime alert escalation: ALERT+ (always during an incident) is
+            # mirrored to the alert channel with an optional role ping.
+            if event.severity.rank >= Severity.ALERT.rank or incident:
+                await self._escalate(event, s)
         except Exception:  # noqa: BLE001
             log.debug("modlog dispatch failed", exc_info=True)
+
+    async def _escalate(self, event: LogEvent, settings: dict) -> None:
+        cid = settings.get("modlog_alert_channel") or settings.get("mod_log_channel")
+        if not cid:
+            return
+        try:
+            cid = int(cid)
+        except (TypeError, ValueError):
+            return
+        ch = self.bot.get_channel(cid)
+        if ch is None or not isinstance(ch, (discord.TextChannel, discord.Thread)):
+            return
+        role_id = settings.get("modlog_alert_role")
+        content = None
+        allowed = discord.AllowedMentions.none()
+        if role_id:
+            content = f"<@&{int(role_id)}>"
+            allowed = discord.AllowedMentions(roles=True)
+        try:
+            await ch.send(content=content, view=self.render(event), allowed_mentions=allowed)
+        except discord.Forbidden:
+            log.debug("modlog: missing perms in alert channel g=%s", event.guild_id)
+
+    # -- anomaly detection ----------------------------------------------------
+
+    # (bucket, window seconds, threshold, message) -- a burst trips a security
+    # event. Tuned conservatively so normal activity never trips it.
+    _ANOMALY_RULES = {
+        "join": (60.0, 10, "Possible raid: {n} joins in {w}s."),
+        "ban": (60.0, 5, "Mass-ban burst: {n} bans in {w}s."),
+        "message.delete": (30.0, 20, "Message-purge burst: {n} deletions in {w}s."),
+    }
+
+    def _bump_window(self, key: tuple, window_s: float) -> int:
+        now = time.monotonic()
+        bucket = self._windows.setdefault(key, [])
+        cutoff = now - window_s
+        bucket[:] = [t for t in bucket if t >= cutoff]
+        bucket.append(now)
+        return len(bucket)
+
+    async def _detect_anomaly(self, event: LogEvent) -> None:
+        # Map an event to a coarse anomaly bucket.
+        bucket = None
+        if event.event_type == "member.join":
+            bucket = "join"
+        elif event.event_type == "member.ban":
+            bucket = "ban"
+        elif event.event_type in ("message.delete", "message.bulk_delete", "message.purge"):
+            bucket = "message.delete"
+        if bucket is None or bucket not in self._ANOMALY_RULES:
+            return
+        window_s, threshold, template = self._ANOMALY_RULES[bucket]
+        n = self._bump_window((event.guild_id, bucket), window_s)
+        if n != threshold:  # fire once, exactly when the threshold is crossed
+            return
+        # Avoid recursing into anomaly detection for the anomaly event itself by
+        # persisting + dispatching directly.
+        anomaly = LogEvent(
+            category=Category.SECURITY, event_type=f"anomaly.{bucket}",
+            guild_id=event.guild_id, severity=Severity.CRITICAL,
+            summary=template.format(n=n, w=int(window_s)),
+            metadata={"window_seconds": int(window_s), "count": n,
+                      "trigger": event.event_type},
+        )
+        await self._persist(anomaly)
+        await self._dispatch(anomaly)
 
     async def _guild_settings(self, guild_id: int) -> dict:
         db = self.db
