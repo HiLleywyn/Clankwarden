@@ -23,42 +23,42 @@ class _FakeBot:
 def test_sections_have_stable_unique_keys():
     keys = [s.key for s in H.SECTIONS]
     assert len(keys) == len(set(keys))
-    assert "containment" in keys and "backups" in keys
+    assert "containment" in keys and "moderation" in keys
 
 
 def test_command_lines_expands_group_subcommands():
-    backup = _FakeCmd("backup", subs=[
-        _FakeCmd("create", "Snapshot the server."),
-        _FakeCmd("load", "Restore a backup."),
+    clank = _FakeCmd("clank", subs=[
+        _FakeCmd("add", "Contain a user."),
+        _FakeCmd("remove", "Release a user."),
     ])
-    bot = _FakeBot([backup])
-    sec = H.SECTIONS_BY_KEY["backups"]
+    bot = _FakeBot([clank])
+    sec = H.SECTIONS_BY_KEY["containment"]
     lines = H.command_lines(bot, sec, ".")
-    assert lines == ["`.backup create` -- Snapshot the server.",
-                     "`.backup load` -- Restore a backup."]
+    assert lines == ["`.clank add` -- Contain a user.",
+                     "`.clank remove` -- Release a user."]
 
 
 def test_command_lines_skips_hidden_and_missing():
-    grp = _FakeCmd("backup", subs=[
-        _FakeCmd("create", "ok"),
+    grp = _FakeCmd("clank", subs=[
+        _FakeCmd("add", "ok"),
         _FakeCmd("secret", "hidden one", hidden=True),
     ])
-    bot = _FakeBot([grp])  # 'template' etc. are absent -> skipped, no crash
-    sec = H.SECTIONS_BY_KEY["backups"]
+    bot = _FakeBot([grp])  # other section commands absent -> skipped, no crash
+    sec = H.SECTIONS_BY_KEY["containment"]
     lines = H.command_lines(bot, sec, ".")
-    assert lines == ["`.backup create` -- ok"]
+    assert lines == ["`.clank add` -- ok"]
 
 
 def test_plain_command_lists_itself():
-    exp = _FakeCmd("export", "Download a backup as JSON.")
-    bot = _FakeBot([exp])
-    sec = H.SECTIONS_BY_KEY["importexport"]
+    ban = _FakeCmd("ban", "Ban a member or user id.")
+    bot = _FakeBot([ban])
+    sec = H.SECTIONS_BY_KEY["moderation"]
     lines = H.command_lines(bot, sec, ".")
-    assert "`.export` -- Download a backup as JSON." in lines
+    assert "`.ban` -- Ban a member or user id." in lines
 
 
 def test_selected_sections_preserves_order_and_filters():
-    chosen = H.selected_sections({"containment", "backups", "bogus"})
+    chosen = H.selected_sections({"containment", "moderation", "bogus"})
     keys = [s.key for s in chosen]
-    # SECTIONS order preserved (backups before containment), unknown dropped
-    assert keys == ["backups", "containment"]
+    # SECTIONS order preserved (moderation before containment), unknown dropped
+    assert keys == ["moderation", "containment"]

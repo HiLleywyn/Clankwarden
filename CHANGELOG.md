@@ -1,5 +1,15 @@
 # Changelog
 
+## [clanktank build] -- 2026-06-01
+
+### Changes
+- **Split into a containment + moderation bot ("Clanktank").** This build keeps
+  the `.clank` containment system, the `mod` command set, the `modlog` audit
+  suite, settings and the `.init` wizard. The server-tool features -- backups,
+  templates, chatlog, sync and import/export -- and their data-plane repos,
+  serializer, migrations and REST routes have been removed; they live in a
+  separate bot. The invite no longer requests Manage Webhooks.
+
 ## [main] -- 2026-06-01
 
 ### New Features
