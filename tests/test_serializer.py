@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import discord  # noqa: F401  -- ensures the runtime has Components V2 era discord.py
 
-from services import serializer
+from clanklib import serializer
 
 
 def test_restore_options_defaults_are_safe() -> None:

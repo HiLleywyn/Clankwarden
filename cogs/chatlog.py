@@ -11,7 +11,7 @@ from core.framework.cogs import GuildCog
 from core.framework.components import Container, send_v2
 from core.framework.context import DiscoContext
 from core.framework.ui import C_ERROR, C_GOLD, C_INFO, C_SUCCESS, fmt_ts
-from services import serializer
+from clanklib import serializer
 
 _ID_RE = re.compile(r"^[0-9a-f]{8}$")
 
