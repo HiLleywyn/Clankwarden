@@ -34,6 +34,15 @@
 - Installation quick-start, full configuration reference and a complete command
   reference.
 
+### Reliability
+- **Paced mass actions**: bursting hundreds of clanks/bans/timeouts at once
+  earns a multi-hour Cloudflare 429 (we hit a 2h ban cleaving 500 accounts). A
+  new `BulkRunner` (`clanklib/ratelimit.py`) serializes and paces big batches,
+  backs off on 429, and aborts the run after a few consecutive rate limits (or a
+  long global retry-after) instead of escalating into a longer ban. Wired into
+  cluster cleave (with a live progress message), clutch mass-clank, and clad
+  bulk-timeout.
+
 ### Guided setup
 - **`.init`**: a one-command guided setup that creates and wires the bot's
   roles, category, channels and escape-room thread. Pick which pieces to

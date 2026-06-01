@@ -6254,21 +6254,42 @@ class Clanktank(commands.Cog):
         clanked_count = 0
         clanked_names: list[str] = []
         failed: list[str] = []
-        for member in to_clank:
+
+        # Pace the cleave: clanking hundreds of accounts in a tight loop is what
+        # earns a multi-hour Cloudflare 429. The runner serializes + paces it and
+        # aborts before a burst turns into a long ban.
+        from clanklib.ratelimit import BulkRunner
+        progress_msg = await ctx.reply(
+            view=_v2(f"Cleaving cluster [{cluster_id}]...", color=C_INFO,
+                     desc=f"Clanking {len(to_clank)} account(s), paced to stay under "
+                          f"Discord's limits. This will take a few minutes."),
+            mention_author=False,
+        )
+
+        async def _clank_one(member: discord.Member) -> None:
+            await self._do_clank(
+                member, ctx.author,
+                f"cluster cleave [{cluster_id}]", None,
+                defer_purge=True,
+            )
+            await self.bot.db.execute(
+                "UPDATE clanker_records SET cluster_id=$1 WHERE user_id=$2 AND guild_id=$3",
+                cluster_id, member.id, ctx.guild.id,
+            )
+            clanked_names.append(f"{member} ({member.id})")
+
+        async def _progress(res) -> None:
             try:
-                await self._do_clank(
-                    member, ctx.author,
-                    f"cluster cleave [{cluster_id}]", None,
-                    defer_purge=True,
-                )
-                await self.bot.db.execute(
-                    "UPDATE clanker_records SET cluster_id=$1 WHERE user_id=$2 AND guild_id=$3",
-                    cluster_id, member.id, ctx.guild.id,
-                )
-                clanked_count += 1
-                clanked_names.append(f"{member} ({member.id})")
-            except Exception as exc:
-                failed.append(f"{member} ({member.id}): {exc}")
+                await progress_msg.edit(view=_v2(
+                    f"Cleaving cluster [{cluster_id}]...", color=C_INFO,
+                    desc=f"{res.processed}/{res.total} processed "
+                         f"({res.succeeded} clanked, {res.failed} failed)."))
+            except Exception:
+                pass
+
+        result = await BulkRunner().run(to_clank, _clank_one, progress=_progress)
+        clanked_count = result.succeeded
+        failed = list(result.errors)
 
         await self.bot.db.execute(
             "UPDATE clanker_clusters SET cleaved_at=now(), updated_at=now() WHERE id=$1",
@@ -6288,11 +6309,12 @@ class Clanktank(commands.Cog):
         await ctx.reply(
             view=_v2(
                 f"Cluster Cleave Complete: [{cluster_id}]",
-                color=C_SUCCESS,
+                color=C_WARNING if result.aborted else C_SUCCESS,
                 fields=[
                     ("Clanked", str(clanked_count)),
                     ("Failed", str(len(failed))),
                     ("Protected (skipped)", str(len(skipped_protected))),
+                    *([("Stopped early", result.abort_reason)] if result.aborted else []),
                     *([("Contained", "\n".join(clanked_names[:10]))] if clanked_names else []),
                     *([("Failures", "\n".join(failed[:5]))] if failed else []),
                 ],
@@ -6824,31 +6846,31 @@ class Clanktank(commands.Cog):
             await ctx.reply_error("Clutch cancelled.")
             return
 
-        clanked = 0
-        failed: list[str] = []
-        for member, reason in to_clank:
-            try:
-                await self._do_clank(
-                    member, ctx.author,
-                    f"clutch scan ({reason})", None,
-                    defer_purge=True,
-                )
-                clanked += 1
-            except Exception as exc:
-                failed.append(f"@{member} ({member.id}): {exc}")
+        # Paced to stay under Discord's rate limits (see clanklib.ratelimit).
+        from clanklib.ratelimit import BulkRunner
+
+        async def _clutch_one(pair) -> None:
+            member, reason = pair
+            await self._do_clank(
+                member, ctx.author, f"clutch scan ({reason})", None, defer_purge=True)
+
+        result = await BulkRunner().run(to_clank, _clutch_one)
+        clanked = result.succeeded
+        failed = list(result.errors)
 
         await self._audit(
             "clutch", gid,
             actor_id=ctx.author.id,
-            details={"clanked": clanked, "failed": len(failed)},
+            details={"clanked": clanked, "failed": len(failed), "aborted": result.aborted},
         )
         await ctx.reply(
             view=_v2(
                 "Clutch Complete",
-                color=C_SUCCESS,
+                color=C_WARNING if result.aborted else C_SUCCESS,
                 fields=[
                     ("Clanked", str(clanked)),
                     ("Failed", str(len(failed))),
+                    *([("Stopped early", result.abort_reason)] if result.aborted else []),
                     *([("Failures", "\n".join(failed[:5]))] if failed else []),
                 ],
             ),
@@ -6950,20 +6972,20 @@ class Clanktank(commands.Cog):
             "SELECT user_id FROM clanker_records WHERE guild_id=$1", gid,
         )
 
-        muted = 0
-        failed_mute: list[str] = []
-        for row in clanker_rows:
-            uid = int(row["user_id"])
-            member = ctx.guild.get_member(uid)
-            if member:
-                try:
-                    await member.timeout(
-                        timedelta(minutes=15),
-                        reason=f"Clanktank clad by {ctx.author}",
-                    )
-                    muted += 1
-                except Exception:
-                    failed_mute.append(str(uid))
+        # Paced to stay under Discord's rate limits (see clanklib.ratelimit).
+        from clanklib.ratelimit import BulkRunner
+        members_to_mute = [
+            m for m in (ctx.guild.get_member(int(r["user_id"])) for r in clanker_rows)
+            if m is not None
+        ]
+
+        async def _mute_one(member: discord.Member) -> None:
+            await member.timeout(
+                timedelta(minutes=15), reason=f"Clanktank clad by {ctx.author}")
+
+        clad_result = await BulkRunner().run(members_to_mute, _mute_one)
+        muted = clad_result.succeeded
+        failed_mute = list(clad_result.errors)
 
         deleted = 0
         tank_id = Config.CLANKTANK_CHANNEL_ID
