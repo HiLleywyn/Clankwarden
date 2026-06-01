@@ -19,7 +19,7 @@ from core.framework.cogs import GuildCog
 from core.framework.components import Container, send_v2
 from core.framework.context import DiscoContext
 from core.framework.ui import C_ERROR, C_GOLD, C_INFO, C_SUCCESS, fmt_ts
-from services import serializer
+from clanklib import serializer
 from cogs._ui import confirm_v2
 
 _MAX_PER_USER = int(os.getenv("BACKUP_MAX_PER_USER", "50"))

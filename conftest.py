@@ -1,4 +1,4 @@
-"""Make the repo root importable in tests (so ``import services`` works)."""
+"""Make the repo root importable in tests (so ``import clanklib`` works)."""
 import os
 import sys
 
