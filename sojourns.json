@@ -36,7 +36,8 @@
         "label": "General",
         "fields": [
           { "key": "PREFIX", "type": "string", "label": "Command prefix", "default": "." },
-          { "key": "API_PORT", "type": "number", "label": "API / health port", "default": 8080 }
+          { "key": "API_PORT", "type": "number", "label": "API / health port", "default": 8080 },
+          { "key": "DISCORD_CLIENT_ID", "type": "string", "label": "Discord application (client) ID", "help": "Enables the Invite button; from the Discord developer portal OAuth2 page." }
         ]
       },
       {
