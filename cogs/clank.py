@@ -2424,13 +2424,54 @@ class Clanktank(commands.Cog):
 
     # -- Channel helpers ------------------------------------------------------
 
-    def _tank_channel(self) -> discord.TextChannel | None:
-        cid = Config.CLANKTANK_CHANNEL_ID
+    async def _guild_channel_id(self, guild_id: int | None, key: str, env_value: int) -> int:
+        """Resolve a containment channel/thread id.
+
+        Reads the per-guild value an operator set with ``.set`` or in the
+        Sojourns UI (stored in guild_settings), falling back to the env var.
+        This is the single source of truth -- the clank cog must NOT read the
+        Config.* env value directly, or per-guild settings are silently ignored.
+
+        When ``guild_id`` is given, that guild's value is used. When it is None
+        (most internal callers do not thread a guild through), the value is
+        resolved from whichever guild the bot is in has it configured -- correct
+        for a bot whose containment lives in one primary server, and still
+        env-fallback safe.
+        """
+        async def _from(gid: int) -> int | None:
+            try:
+                s = await self.bot.db.get_guild_settings(int(gid))
+            except Exception:
+                return None
+            val = s.get(key)
+            try:
+                return int(val) if val else None
+            except (TypeError, ValueError):
+                return None
+
+        if guild_id is not None:
+            got = await _from(guild_id)
+            if got:
+                return got
+            return int(env_value or 0)
+
+        # No guild context: prefer a configured value from any guild the bot is
+        # in, else the env var.
+        for g in getattr(self.bot, "guilds", []):
+            got = await _from(g.id)
+            if got:
+                return got
+        return int(env_value or 0)
+
+    async def _tank_channel(self, guild_id: int | None = None) -> discord.TextChannel | None:
+        cid = await self._guild_channel_id(
+            guild_id, "clanktank_channel", Config.CLANKTANK_CHANNEL_ID)
         ch = self.bot.get_channel(cid) if cid else None
         return ch if isinstance(ch, discord.TextChannel) else None
 
-    async def _log_mod(self, view: discord.ui.LayoutView) -> None:
-        cid = Config.CLANKTANK_LOG_CHANNEL_ID
+    async def _log_mod(self, view: discord.ui.LayoutView, guild_id: int | None = None) -> None:
+        cid = await self._guild_channel_id(
+            guild_id, "clanktank_log_channel", Config.CLANKTANK_LOG_CHANNEL_ID)
         if not cid:
             return
         ch = self.bot.get_channel(cid)
@@ -2653,7 +2694,7 @@ class Clanktank(commands.Cog):
         ))
 
         if clanked:
-            tank = self._tank_channel()
+            tank = await self._tank_channel()
             if tank:
                 names = ", ".join(f"<@{t}>" for t in clanked)
                 try:
@@ -2794,7 +2835,7 @@ class Clanktank(commands.Cog):
             pass
 
     async def _tank_send(self, guild_id: int, user_id: int, rec: dict, pool: list[list[str]]) -> None:
-        tank = self._tank_channel()
+        tank = await self._tank_channel(guild_id)
         if not tank:
             return
         eff = await self._effective_score(user_id, guild_id, rec)
@@ -2812,7 +2853,7 @@ class Clanktank(commands.Cog):
         self, guild_id: int, rec: dict, pool: list[list[str]], label: str = "", *, member_name: str = ""
     ) -> None:
         """Send a message to tank channel. Pass member_name to mention the user (e.g. on leave)."""
-        tank = self._tank_channel()
+        tank = await self._tank_channel(guild_id)
         if not tank:
             return
         uid = int(rec.get("user_id", 0))
@@ -3561,7 +3602,7 @@ class Clanktank(commands.Cog):
                 uid, gid, content[:2000], execution.channel_id, "automod_trigger",
             )
 
-        tank = self._tank_channel()
+        tank = await self._tank_channel()
         if tank:
             try:
                 await tank.send(
@@ -4269,9 +4310,16 @@ class Clanktank(commands.Cog):
         """Resolved escape-thread id: runtime override (,clanker er setthread) wins over env."""
         return self._escape_thread_override or Config.CLANK_ESCAPE_THREAD_ID
 
-    async def _get_escape_thread(self) -> discord.Thread | None:
-        """Fetch the configured shared escape thread (runtime override or env)."""
-        tid = self._escape_thread_id()
+    async def _get_escape_thread(self, guild_id: int | None = None) -> discord.Thread | None:
+        """Fetch the configured shared escape thread.
+
+        Order: runtime override (,clanker er setthread) -> per-guild setting
+        (clank_escape_thread, set via .set or Sojourns) -> env var.
+        """
+        tid = self._escape_thread_override
+        if not tid:
+            tid = await self._guild_channel_id(
+                guild_id, "clank_escape_thread", Config.CLANK_ESCAPE_THREAD_ID)
         if not tid:
             return None
         thread = self.bot.get_channel(tid)
@@ -4364,7 +4412,8 @@ class Clanktank(commands.Cog):
                 keep_data.setdefault("username", str(member))
             await self._er_delete_message(existing)
 
-        tank_ch_id = Config.CLANKTANK_CHANNEL_ID
+        tank_ch_id = await self._guild_channel_id(
+            gid, "clanktank_channel", Config.CLANKTANK_CHANNEL_ID)
 
         if send_intro:
             clank_msg = (
