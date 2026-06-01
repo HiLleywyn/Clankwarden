@@ -60,6 +60,25 @@ def test_humanize_type_is_readable() -> None:
     assert modlog._humanize_type("member.role_update") == "Member - Role Update"
 
 
+def test_event_hash_is_deterministic_and_chains() -> None:
+    logger = modlog.ModLogger(bot=None)
+    ev = LogEvent(category=Category.MODERATION, event_type="member.ban", guild_id=1,
+                  severity=Severity.ALERT, target=42, summary="x")
+    h1 = logger._event_hash("", ev)
+    h2 = logger._event_hash("", ev)
+    assert h1 == h2 and len(h1) == 64
+    # A different previous hash yields a different digest (chaining).
+    assert logger._event_hash("deadbeef", ev) != h1
+
+
+def test_anomaly_window_fires_once_at_threshold() -> None:
+    logger = modlog.ModLogger(bot=None)
+    key = (1, "join")
+    counts = [logger._bump_window(key, 60.0) for _ in range(5)]
+    assert counts == [1, 2, 3, 4, 5]
+    # The detector fires exactly when n == threshold, so callers compare to it.
+
+
 def test_render_builds_a_layout_view() -> None:
     ev = LogEvent(category=Category.MODERATION, event_type="member.ban", guild_id=1,
                   severity=Severity.ALERT, target=12345,

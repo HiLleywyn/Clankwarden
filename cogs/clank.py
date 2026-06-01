@@ -6254,21 +6254,42 @@ class Clanktank(commands.Cog):
         clanked_count = 0
         clanked_names: list[str] = []
         failed: list[str] = []
-        for member in to_clank:
+
+        # Pace the cleave: clanking hundreds of accounts in a tight loop is what
+        # earns a multi-hour Cloudflare 429. The runner serializes + paces it and
+        # aborts before a burst turns into a long ban.
+        from clanklib.ratelimit import BulkRunner
+        progress_msg = await ctx.reply(
+            view=_v2(f"Cleaving cluster [{cluster_id}]...", color=C_INFO,
+                     desc=f"Clanking {len(to_clank)} account(s), paced to stay under "
+                          f"Discord's limits. This will take a few minutes."),
+            mention_author=False,
+        )
+
+        async def _clank_one(member: discord.Member) -> None:
+            await self._do_clank(
+                member, ctx.author,
+                f"cluster cleave [{cluster_id}]", None,
+                defer_purge=True,
+            )
+            await self.bot.db.execute(
+                "UPDATE clanker_records SET cluster_id=$1 WHERE user_id=$2 AND guild_id=$3",
+                cluster_id, member.id, ctx.guild.id,
+            )
+            clanked_names.append(f"{member} ({member.id})")
+
+        async def _progress(res) -> None:
             try:
-                await self._do_clank(
-                    member, ctx.author,
-                    f"cluster cleave [{cluster_id}]", None,
-                    defer_purge=True,
-                )
-                await self.bot.db.execute(
-                    "UPDATE clanker_records SET cluster_id=$1 WHERE user_id=$2 AND guild_id=$3",
-                    cluster_id, member.id, ctx.guild.id,
-                )
-                clanked_count += 1
-                clanked_names.append(f"{member} ({member.id})")
-            except Exception as exc:
-                failed.append(f"{member} ({member.id}): {exc}")
+                await progress_msg.edit(view=_v2(
+                    f"Cleaving cluster [{cluster_id}]...", color=C_INFO,
+                    desc=f"{res.processed}/{res.total} processed "
+                         f"({res.succeeded} clanked, {res.failed} failed)."))
+            except Exception:
+                pass
+
+        result = await BulkRunner().run(to_clank, _clank_one, progress=_progress)
+        clanked_count = result.succeeded
+        failed = list(result.errors)
 
         await self.bot.db.execute(
             "UPDATE clanker_clusters SET cleaved_at=now(), updated_at=now() WHERE id=$1",
@@ -6288,11 +6309,12 @@ class Clanktank(commands.Cog):
         await ctx.reply(
             view=_v2(
                 f"Cluster Cleave Complete: [{cluster_id}]",
-                color=C_SUCCESS,
+                color=C_WARNING if result.aborted else C_SUCCESS,
                 fields=[
                     ("Clanked", str(clanked_count)),
                     ("Failed", str(len(failed))),
                     ("Protected (skipped)", str(len(skipped_protected))),
+                    *([("Stopped early", result.abort_reason)] if result.aborted else []),
                     *([("Contained", "\n".join(clanked_names[:10]))] if clanked_names else []),
                     *([("Failures", "\n".join(failed[:5]))] if failed else []),
                 ],
@@ -6824,31 +6846,31 @@ class Clanktank(commands.Cog):
             await ctx.reply_error("Clutch cancelled.")
             return
 
-        clanked = 0
-        failed: list[str] = []
-        for member, reason in to_clank:
-            try:
-                await self._do_clank(
-                    member, ctx.author,
-                    f"clutch scan ({reason})", None,
-                    defer_purge=True,
-                )
-                clanked += 1
-            except Exception as exc:
-                failed.append(f"@{member} ({member.id}): {exc}")
+        # Paced to stay under Discord's rate limits (see clanklib.ratelimit).
+        from clanklib.ratelimit import BulkRunner
+
+        async def _clutch_one(pair) -> None:
+            member, reason = pair
+            await self._do_clank(
+                member, ctx.author, f"clutch scan ({reason})", None, defer_purge=True)
+
+        result = await BulkRunner().run(to_clank, _clutch_one)
+        clanked = result.succeeded
+        failed = list(result.errors)
 
         await self._audit(
             "clutch", gid,
             actor_id=ctx.author.id,
-            details={"clanked": clanked, "failed": len(failed)},
+            details={"clanked": clanked, "failed": len(failed), "aborted": result.aborted},
         )
         await ctx.reply(
             view=_v2(
                 "Clutch Complete",
-                color=C_SUCCESS,
+                color=C_WARNING if result.aborted else C_SUCCESS,
                 fields=[
                     ("Clanked", str(clanked)),
                     ("Failed", str(len(failed))),
+                    *([("Stopped early", result.abort_reason)] if result.aborted else []),
                     *([("Failures", "\n".join(failed[:5]))] if failed else []),
                 ],
             ),
@@ -6950,20 +6972,20 @@ class Clanktank(commands.Cog):
             "SELECT user_id FROM clanker_records WHERE guild_id=$1", gid,
         )
 
-        muted = 0
-        failed_mute: list[str] = []
-        for row in clanker_rows:
-            uid = int(row["user_id"])
-            member = ctx.guild.get_member(uid)
-            if member:
-                try:
-                    await member.timeout(
-                        timedelta(minutes=15),
-                        reason=f"Clanktank clad by {ctx.author}",
-                    )
-                    muted += 1
-                except Exception:
-                    failed_mute.append(str(uid))
+        # Paced to stay under Discord's rate limits (see clanklib.ratelimit).
+        from clanklib.ratelimit import BulkRunner
+        members_to_mute = [
+            m for m in (ctx.guild.get_member(int(r["user_id"])) for r in clanker_rows)
+            if m is not None
+        ]
+
+        async def _mute_one(member: discord.Member) -> None:
+            await member.timeout(
+                timedelta(minutes=15), reason=f"Clanktank clad by {ctx.author}")
+
+        clad_result = await BulkRunner().run(members_to_mute, _mute_one)
+        muted = clad_result.succeeded
+        failed_mute = list(clad_result.errors)
 
         deleted = 0
         tank_id = Config.CLANKTANK_CHANNEL_ID
@@ -7883,48 +7905,48 @@ class _ClankerHelpView(discord.ui.LayoutView):
         return [
             # -- Containment --
             (
-                f"**{p}clanker add <user> [reason] [duration]**\n"
+                f"**{p}clank add <user> [reason] [duration]**\n"
                 f"-# Strip roles, apply Clanker, purge messages, run account-linking."
                 f" Duration: `30m` `2h` `7d` or omit for permanent.\n\n"
-                f"**{p}clanker remove <user>**\n"
+                f"**{p}clank remove <user>**\n"
                 f"-# Release from containment and restore original roles.\n\n"
-                f"**{p}clanker list**\n"
+                f"**{p}clank list**\n"
                 f"-# Sortable paginated list. Sort: newest, oldest, highest score, leavers, evaders.\n\n"
-                f"**{p}clanker info <user>**\n"
+                f"**{p}clank info <user>**\n"
                 f"-# Full record: stats, leave/rejoin history, evidence preview, linked accounts.\n\n"
-                f"**{p}clanker evidence <user> [limit]**\n"
+                f"**{p}clank evidence <user> [limit]**\n"
                 f"-# Paginated evidence log with full message content. Default limit: 20.\n\n"
-                f"**{p}clanker logs [user] [limit]**\n"
+                f"**{p}clank logs [user] [limit]**\n"
                 f"-# Audit log. Omit user for guild-wide. Default limit: 10.\n\n"
-                f"**{p}clanker scan [@baseRole @stopRole]**\n"
+                f"**{p}clank scan [@baseRole @stopRole]**\n"
                 f"-# Full connection scan, or score role-band members and prepare clusters for review.\n\n"
-                f"**{p}clanker sync**\n"
+                f"**{p}clank sync**\n"
                 f"-# Register all members who already hold the Clanker role in the DB."
             ),
             # -- Clusters & Patterns --
             (
-                f"**{p}clanker clusters**\n"
+                f"**{p}clank clusters**\n"
                 f"-# Sortable paginated list. Sort: confidence, newest, largest, active, cleaved.\n\n"
-                f"**{p}clanker clusters clade**\n"
+                f"**{p}clank clusters clade**\n"
                 f"-# Re-run the full CCI spectral clustering pipeline and update cluster assignments.\n\n"
-                f"**{p}clanker cluster <id>**\n"
+                f"**{p}clank cluster <id>**\n"
                 f"-# Detail view: members, scores, message counts, learned name patterns.\n\n"
-                f"**{p}clanker cluster cleave <id>**\n"
+                f"**{p}clank cluster cleave <id>**\n"
                 f"-# Mass-clank eligible members. Skips mods and level 30+. Confirmation required.\n\n"
-                f"**{p}clanker cluster <id> add/remove @user**\n"
+                f"**{p}clank cluster <id> add/remove @user**\n"
                 f"-# Manually curate cluster membership without clanking.\n\n"
-                f"**{p}clanker cluster <id> label <name>**\n"
+                f"**{p}clank cluster <id> label <name>**\n"
                 f"-# Set a human-readable label on a cluster.\n\n"
-                f"**{p}clanker cline [@user] [cluster_id]**\n"
+                f"**{p}clank cline [@user] [cluster_id]**\n"
                 f"-# List detected patterns for a user, cluster, or guild-wide. Sort: hits, weight, type.\n\n"
-                f"**{p}clanker tree <user>**\n"
+                f"**{p}clank tree <user>**\n"
                 f"-# ASCII connection graph rooted at this user, showing all linked accounts.\n\n"
                 f"-# Clusters auto-form when {_CLUSTER_MIN_SIZE}+ connected accounts are detected."
                 f" Alert at {_JOIN_ALERT_THRESHOLD:.0%} CCI; auto-clank at {_JOIN_AUTO_CLANK_SCORE:.0%}."
             ),
             # -- Clamp Guard --
             (
-                f"**{p}clanker clamp**\n"
+                f"**{p}clank clamp**\n"
                 f"-# Components v2 settings panel. Click ON/OFF to toggle each guard instantly.\n\n"
                 f"-# Clear URLs (ON) -- auto-delete URLs posted by clanked users\n"
                 f"-# Clear Addresses (ON) -- auto-delete crypto addresses from clanked users\n"
@@ -7932,26 +7954,27 @@ class _ClankerHelpView(discord.ui.LayoutView):
                 f"-# Clasp Mute (OFF) -- auto-timeout on guard-channel violations\n"
                 f"-# Clasp Delete (OFF) -- auto-delete guard-channel violations\n"
                 f"-# AutoMod Clank (ON) -- auto-clank users caught by Discord AutoMod\n\n"
-                f"**{p}clanker clamp clasp channel #channel**\n"
+                f"**{p}clank clamp clasp channel #channel**\n"
                 f"-# Add/remove a channel from the guard list. Ambient detection fires here only.\n\n"
-                f"**{p}clanker hunter channel #channel**\n"
-                f"-# Set the scam report channel for whitelisted hunters.\n\n"
-                f"**{p}clanker hunter add/remove @user  |  {p}clanker hunter list**\n"
-                f"-# Manage the scam hunter whitelist. Hunters auto-clank IDs/@mentions they post."
+                f"**{p}clank hunter channel #channel**\n"
+                f"-# Set the scam report channel hunters post in.\n\n"
+                f"**{p}clank hunter role @role  |  {p}clank hunter list**\n"
+                f"-# Set the clanker-hunter role. Anyone wearing it can auto-clank the "
+                f"IDs/@mentions they post in the hunter channel; `list` shows current holders."
             ),
             # -- Actions & Chart --
             (
-                f"**{p}clanker chart**\n"
+                f"**{p}clank chart**\n"
                 f"-# 4-panel analytics PNG: clanks/day, score distribution, active/released, top 10.\n\n"
-                f"**{p}clanker clarion <message>**\n"
+                f"**{p}clank clarion <message>**\n"
                 f"-# AI sockpuppet -- sends message as Disco to the tank channel. Manage Roles + level 15+.\n\n"
-                f"**{p}clanker clamp clutch [max]**\n"
+                f"**{p}clank clamp clutch [max]**\n"
                 f"-# Scan all members for scam signals. Pass a count to auto-clank with confirmation.\n\n"
-                f"**{p}clanker clamp cloister @user**\n"
+                f"**{p}clank clamp cloister @user**\n"
                 f"-# Private mod thread + delete last 100 messages from current channel.\n\n"
-                f"**{p}clanker clamp clad**\n"
+                f"**{p}clank clamp clad**\n"
                 f"-# Emergency lockdown: timeout all clankers 15 min + purge tank channel.\n\n"
-                f"**{p}clanker clamp clink @user**\n"
+                f"**{p}clank clamp clink @user**\n"
                 f"-# Pattern risk probe: name keywords, CCI, age, cluster. Returns HIGH/MEDIUM/LOW.\n\n"
                 f"-# Automatic: role lock every 5 min, URL/address deletion, AutoMod clanking,\n"
                 f"-# scam hunter reports, scam-username and CCI-100% auto-clank on join.\n"
@@ -7962,9 +7985,9 @@ class _ClankerHelpView(discord.ui.LayoutView):
             (
                 f"Every newly clanked user is enrolled in the **Escape Room** -- an 8-station"
                 f" bureaucratic ordeal designed to prove they are human and not, in fact, a Nigerian prince.\n\n"
-                f"**{p}clanker escape**\n"
+                f"**{p}clank escape**\n"
                 f"-# Clankers only. Run this to (re)open your case and get a link to the escape thread.\n\n"
-                f"**Admin tools -- {p}clanker er ...** *(Manage Roles)*\n"
+                f"**Admin tools -- {p}clank er ...** *(Manage Roles)*\n"
                 f"-# `status` -- health check: thread, bot perms, active rooms, registered buttons\n"
                 f"-# `reload` -- re-register all escape buttons live (fixes dead buttons after a deploy, no restart)\n"
                 f"-# `reset <user>` -- wipe + rebuild one clanker's room from station 1\n"
@@ -7981,13 +8004,17 @@ class _ClankerHelpView(discord.ui.LayoutView):
                 f"-# 6. Pledges -- swear on four sacred covenants\n"
                 f"-# 7. Final Exam -- prove you know how a normal human greets new members\n"
                 f"-# 8. DM Security Check -- turn DMs off; the bot verifies it can't reach you\n\n"
-                f"**ENV vars:**\n"
-                f"`CLANKTANK_CHANNEL_ID` -- main tank channel (required)\n"
-                f"`CLANKTANK_LOG_CHANNEL_ID` -- mod log channel (optional)\n"
-                f"`CLANKER_ROLE_ID` -- the Clanker role ID (required)\n"
-                f"`CLANK_ESCAPE_THREAD_ID` -- shared public escape thread; or set it live with `{p}clanker er setthread`\n"
-                f"`CLANK_ESCAPE_WAIT_MINUTES` -- station 5 waiting room delay in minutes (default: 5; "
-                f"per-server override via {p}set reflection or the web UI)"
+                f"**Setup (Discord or web UI -- env vars are only fallbacks):**\n"
+                f"-# Easiest: run `{p}init` to create the roles/channels/category and wire it all up.\n"
+                f"`{p}set tank #channel` -- main tank channel (required)\n"
+                f"`{p}set clankerlog #channel` -- containment log (optional)\n"
+                f"`{p}set clankerrole @role` -- the Clanker role (required)\n"
+                f"`{p}set category <category>` -- the containment category\n"
+                f"`{p}set escapethread #thread` -- shared public escape thread "
+                f"(or live with `{p}clank er setthread`)\n"
+                f"`{p}set reflection <minutes>` -- station 5 waiting-room delay (default: 5)\n"
+                f"`{p}set modlog #channel` -- the comprehensive mod log\n"
+                f"-# Every option above is also editable in the Sojourns web UI."
             ),
         ]
 

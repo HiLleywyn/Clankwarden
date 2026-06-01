@@ -28,6 +28,7 @@ _FALLBACK_COGS = [
     "cogs.meta",
     "cogs.modlog",
     "cogs.mod",
+    "cogs.setupwiz",
     "cogs.settings",
     "cogs.backups",
     "cogs.templates",

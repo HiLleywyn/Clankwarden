@@ -35,6 +35,12 @@ class PgDatabase:
         self._dsn = dsn
         self._pool: asyncpg.Pool | None = None
         self._repos: dict[str, Any] = {}
+        # In-process per-guild settings cache. get_guild_settings runs on every
+        # message (prefix resolution) plus several times per command, so an
+        # uncached read is a DB round-trip on the hot path -- the cache collapses
+        # those to one query per guild per TTL. Writes invalidate the entry.
+        self._gs_cache: dict[int, tuple[float, dict]] = {}
+        self._gs_ttl: float = 15.0
 
     # -- lifecycle -------------------------------------------------------------
 
@@ -123,8 +129,17 @@ class PgDatabase:
         top level so ``settings.get("welcome")`` works alongside real columns
         (``prefix``, ``bot_channels`` ...). Clank's containment channels fall
         back to the matching env vars when unset, matching Disco's behaviour.
+
+        Cached in-process for a short TTL (see ``_gs_ttl``); writes via
+        :meth:`update_guild_setting` invalidate the entry, and the control plane
+        pushes go through that same method, so a UI change is reflected at once.
         """
         gid = int(guild_id)
+        import time as _time
+        cached = self._gs_cache.get(gid)
+        if cached is not None and (_time.monotonic() - cached[0]) < self._gs_ttl:
+            return dict(cached[1])
+
         row = await self.fetch_one("SELECT * FROM guild_settings WHERE guild_id = $1", gid)
         if row is None:
             await self.execute(
@@ -164,7 +179,8 @@ class PgDatabase:
         if not d.get("clank_escape_wait_minutes"):
             d["clank_escape_wait_minutes"] = int(
                 os.getenv("CLANK_ESCAPE_WAIT_MINUTES") or 0) or None
-        return d
+        self._gs_cache[gid] = (_time.monotonic(), d)
+        return dict(d)
 
     async def update_guild_setting(self, guild_id: int, key: str, value: Any) -> None:
         """Set a real column (when ``key`` is one) or a ``features`` JSONB key.
@@ -177,6 +193,7 @@ class PgDatabase:
         """
         gid = int(guild_id)
         key = _GUILD_KEY_ALIASES.get(key, key)
+        self._gs_cache.pop(gid, None)  # invalidate so the next read is fresh
         await self.execute(
             "INSERT INTO guild_settings (guild_id) VALUES ($1) ON CONFLICT DO NOTHING", gid
         )
@@ -193,6 +210,8 @@ class PgDatabase:
                 "WHERE guild_id = $1",
                 gid, [key], json.dumps(value),
             )
+        # Drop again in case a concurrent read repopulated the entry mid-write.
+        self._gs_cache.pop(gid, None)
 
     # -- repo accessors --------------------------------------------------------
 

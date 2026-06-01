@@ -34,6 +34,24 @@
 - Installation quick-start, full configuration reference and a complete command
   reference.
 
+### Reliability
+- **Paced mass actions**: bursting hundreds of clanks/bans/timeouts at once
+  earns a multi-hour Cloudflare 429 (we hit a 2h ban cleaving 500 accounts). A
+  new `BulkRunner` (`clanklib/ratelimit.py`) serializes and paces big batches,
+  backs off on 429, and aborts the run after a few consecutive rate limits (or a
+  long global retry-after) instead of escalating into a longer ban. Wired into
+  cluster cleave (with a live progress message), clutch mass-clank, and clad
+  bulk-timeout.
+
+### Guided setup
+- **`.init`**: a one-command guided setup that creates and wires the bot's
+  roles, category, channels and escape-room thread. Pick which pieces to
+  provision (containment, logging, alerts, hunters) from a select, Confirm
+  before anything is created, then **Keep** or **Revert** -- Revert deletes
+  exactly what the run created (never anything pre-existing) and clears the
+  settings it wrote, returning you to the start. A mid-run failure auto-rolls
+  back. Uses Manage Roles + Manage Channels; no Administrator.
+
 ### Moderation commands
 - **Mod command set** (`cogs/mod.py`), Components V2 native: `ban`, `unban`,
   `softban`, `kick`, `timeout`/`mute`, `untimeout`/`unmute`, `warn`,
@@ -67,6 +85,18 @@
   recorded for the timeline.
 - Per-category log routing and a default mod log channel, configurable in both
   Discord and the Sojourns web UI.
+- **Tamper-evident audit chain**: every event stores the hash of the previous
+  event plus its own; `.modlog verify` walks the chain and reports the first
+  break (an altered or deleted row).
+- **Realtime alerts**: ALERT/CRITICAL events (and everything during an incident)
+  are mirrored to a configurable alert channel with an optional role ping
+  (`.modlog alert channel/role`).
+- **Anomaly detection**: join floods (raids), mass-ban bursts and message-purge
+  bursts trip a CRITICAL security event automatically.
+- **Incident mode** (`.modlog incident on/off`): unmutes every category and
+  mirrors all events to the alert channel for the duration of a situation.
+- **Invite attribution**: member-join events record the invite code and who
+  invited them (best-effort, needs Manage Server).
 
 ### Changes
 - Components V2 is the default UI across every command.
