@@ -25,7 +25,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 #    used at build time and is never baked into the final layers' env.
 ARG FRAMEWORK_REF=main
 ARG GITHUB_TOKEN=
-RUN pip install "bot-framework @ git+https://${GITHUB_TOKEN:+${GITHUB_TOKEN}@}github.com/hilleywyn/framework.git@${FRAMEWORK_REF}"
+# Cache-bust this layer whenever the upstream ref moves. The pip line's command
+# text never changes, so Docker would otherwise reuse a stale cached layer and
+# install an OLD framework even after hilleywyn/framework@main advances. Pass
+# --build-arg FRAMEWORK_BUST=<changing value> (a timestamp or the upstream commit
+# sha) to force a fresh pull. ``--no-cache-dir`` also stops pip's own wheel cache
+# from serving a stale build of the same ref.
+ARG FRAMEWORK_BUST=0
+RUN echo "framework ref=${FRAMEWORK_REF} bust=${FRAMEWORK_BUST}" \
+    && pip install --no-cache-dir --force-reinstall \
+        "bot-framework @ git+https://${GITHUB_TOKEN:+${GITHUB_TOKEN}@}github.com/hilleywyn/framework.git@${FRAMEWORK_REF}"
 
 # 2. App-level dependencies.
 COPY requirements.txt .
