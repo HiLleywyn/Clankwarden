@@ -34,6 +34,18 @@
 - Installation quick-start, full configuration reference and a complete command
   reference.
 
+### Moderation commands
+- **Mod command set** (`cogs/mod.py`), Components V2 native: `ban`, `unban`,
+  `softban`, `kick`, `timeout`/`mute`, `untimeout`/`unmute`, `warn`,
+  `warnings`, `delwarn`, `purge`, `slowmode`, `lock`, `unlock`.
+- **Locked down**: every command requires the matching guild permission AND the
+  matching bot permission, and every member action passes a role-hierarchy
+  guard (you cannot action the server owner, the bot, yourself, anyone at or
+  above your top role, or anyone above the bot). Durations accept `10m`, `1h`,
+  `2d`; timeouts clamp to Discord's 28-day max; purge caps at 200.
+- Warnings persist (`mod_warnings`), can be listed and individually removed, and
+  every action is recorded through the central mod log.
+
 ### Moderation logging
 - **Comprehensive mod log**: A new centralized logger (`bot.modlog`) records
   every tracked event under one standardized schema (short event id, UTC

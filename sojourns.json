@@ -23,6 +23,7 @@
   "features": [
     "cogs.meta",
     "cogs.modlog",
+    "cogs.mod",
     "cogs.settings",
     "cogs.backups",
     "cogs.templates",

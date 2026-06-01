@@ -27,6 +27,7 @@ from core.framework.run import run_manifest  # noqa: E402  (must follow the JWT_
 _FALLBACK_COGS = [
     "cogs.meta",
     "cogs.modlog",
+    "cogs.mod",
     "cogs.settings",
     "cogs.backups",
     "cogs.templates",
