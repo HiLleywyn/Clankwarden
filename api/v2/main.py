@@ -18,7 +18,11 @@ from fastapi.responses import JSONResponse
 from api.v2.exceptions import AppError, ForbiddenError, NotFoundError, UnauthorizedError
 
 
-def create_app(bot: Any) -> FastAPI:
+def create_app(bot: Any = None) -> FastAPI:
+    # The framework calls ``create_app()`` with no arguments and then sets
+    # ``app.state.bot = self`` immediately after (see
+    # ``FrameworkBot._ensure_api_server_started``). ``bot`` is therefore
+    # optional; handlers read the live bot via ``app.state.bot``.
     app = FastAPI(title="Clanksimus Prime API", version="2.0.0", docs_url="/api/docs")
     app.state.bot = bot
 
