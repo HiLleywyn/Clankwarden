@@ -7,7 +7,7 @@ import secrets
 import discord
 from discord.ext import commands
 
-from core.framework.cogs import GuildCog
+from clanklib.permissions import ModCog
 from core.framework.components import Container, send_v2
 from core.framework.context import DiscoContext
 from core.framework.ui import C_ERROR, C_GOLD, C_INFO, C_SUCCESS, fmt_ts
@@ -21,7 +21,7 @@ def _new_id() -> str:
     return secrets.token_hex(4)
 
 
-class Chatlog(GuildCog):
+class Chatlog(ModCog):
     @commands.group(name="chatlog", aliases=["log", "cl"], invoke_without_command=True)
     async def chatlog(self, ctx: DiscoContext) -> None:
         await self.chatlog_list(ctx)
@@ -44,7 +44,7 @@ class Chatlog(GuildCog):
             )
         await send_v2(ctx, Container(accent_color=C_SUCCESS)
                       .text("## Chatlog saved")
-                      .text(f"**ID** `{cid}`  -  {len(messages)} messages from {channel.mention}")
+                      .text(f"**ID** `{cid}` · {len(messages)} messages from {channel.mention}")
                       .separator()
                       .text(f"-# Replay it with `{self._p()}chatlog load {cid} #channel`."))
 
@@ -77,8 +77,8 @@ class Chatlog(GuildCog):
                           .text(f"Save one with `{self._p()}chatlog create`."))
             return
         lines = [
-            f"`{r['id']}`  -  #{r.get('channel_name') or '?'}  -  "
-            f"{r.get('message_count', 0)} msgs  -  {fmt_ts(r['created_at'])}"
+            f"`{r['id']}` · #{r.get('channel_name') or '?'} · "
+            f"{r.get('message_count', 0)} msgs · {fmt_ts(r['created_at'])}"
             for r in rows
         ]
         await send_v2(ctx, Container(accent_color=C_INFO)

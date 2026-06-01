@@ -4,7 +4,7 @@ from __future__ import annotations
 import discord
 from discord.ext import commands
 
-from core.framework.cogs import GuildCog
+from clanklib.permissions import ModCog
 from core.framework.components import Container, send_v2
 from core.framework.context import DiscoContext
 from core.framework.ui import C_ERROR, C_INFO, C_SUCCESS
@@ -18,7 +18,7 @@ def _chan(guild: discord.Guild, cid) -> str:
     return ch.mention if ch else f"`{cid}` (missing)"
 
 
-class Settings(GuildCog):
+class Settings(ModCog):
     @commands.command(name="settings", aliases=["config", "cfg"])
     @commands.has_guild_permissions(manage_guild=True)
     async def settings_cmd(self, ctx: DiscoContext) -> None:

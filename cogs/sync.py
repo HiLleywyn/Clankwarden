@@ -12,14 +12,14 @@ from __future__ import annotations
 import discord
 from discord.ext import commands
 
-from core.framework.cogs import GuildCog
+from clanklib.permissions import ModCog
 from core.framework.components import Container, send_v2
 from core.framework.context import DiscoContext
 from clanklib.settings import prefix as _prefix
 from core.framework.ui import C_ERROR, C_INFO, C_SUCCESS, fmt_ts
 
 
-class Sync(GuildCog):
+class Sync(ModCog):
     @commands.group(name="sync", invoke_without_command=True)
     async def sync(self, ctx: DiscoContext) -> None:
         await self.sync_list(ctx)
@@ -43,7 +43,7 @@ class Sync(GuildCog):
         )
         await send_v2(ctx, Container(accent_color=C_SUCCESS)
                       .text("## Message sync created")
-                      .text(f"`#{link_id}`  -  {source.mention} -> {target.mention}")
+                      .text(f"`#{link_id}` · {source.mention} -> {target.mention}")
                       .separator()
                       .text(f"-# Remove with `{self._p()}sync remove {link_id}`."))
 
@@ -61,7 +61,7 @@ class Sync(GuildCog):
         )
         await send_v2(ctx, Container(accent_color=C_SUCCESS)
                       .text("## Ban sync created")
-                      .text(f"`#{link_id}`  -  bans from `{source_guild_id}` -> `{target_guild_id}`"))
+                      .text(f"`#{link_id}` · bans from `{source_guild_id}` -> `{target_guild_id}`"))
 
     @sync.command(name="list", aliases=["ls"])
     async def sync_list(self, ctx: DiscoContext) -> None:
@@ -74,10 +74,10 @@ class Sync(GuildCog):
         for r in rows:
             status = "on" if r.get("enabled") else "off"
             if r["kind"] == "messages":
-                lines.append(f"`#{r['id']}`  -  messages <#{r['source_id']}> -> "
+                lines.append(f"`#{r['id']}` · messages <#{r['source_id']}> -> "
                              f"<#{r['target_id']}>  ({status})")
             else:
-                lines.append(f"`#{r['id']}`  -  bans `{r['source_id']}` -> "
+                lines.append(f"`#{r['id']}` · bans `{r['source_id']}` -> "
                              f"`{r['target_id']}`  ({status})")
         await send_v2(ctx, Container(accent_color=C_INFO)
                       .text(f"## Sync links ({len(rows)})").text("\n".join(lines)[:3900]))

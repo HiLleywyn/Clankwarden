@@ -9,7 +9,7 @@ import secrets
 import discord
 from discord.ext import commands
 
-from core.framework.cogs import GuildCog
+from clanklib.permissions import ModCog
 from core.framework.components import Container, send_v2
 from core.framework.context import DiscoContext
 from core.framework.ui import C_ERROR, C_INFO, C_SUCCESS
@@ -20,7 +20,7 @@ _ID_RE = re.compile(r"^[0-9a-f]{8}$")
 _MAX_IMPORT_BYTES = 8 * 1024 * 1024  # 8 MB
 
 
-class ImportExport(GuildCog):
+class ImportExport(ModCog):
     @commands.command(name="export")
     async def export_cmd(self, ctx: DiscoContext, backup_id: str) -> None:
         """Download a backup as a portable JSON file."""

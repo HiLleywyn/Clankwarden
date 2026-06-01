@@ -14,7 +14,7 @@ import secrets
 import discord
 from discord.ext import commands, tasks
 
-from core.framework.cogs import GuildCog
+from clanklib.permissions import ModCog
 from core.framework.components import Container, send_v2
 from core.framework.context import DiscoContext
 from core.framework.ui import C_ERROR, C_GOLD, C_INFO, C_SUCCESS, fmt_ts
@@ -29,7 +29,7 @@ def _new_id() -> str:
     return secrets.token_hex(4)
 
 
-class Backups(GuildCog):
+class Backups(ModCog):
     def __init__(self, bot: commands.Bot) -> None:
         super().__init__(bot)
         self._auto_backup_loop.start()
@@ -77,8 +77,8 @@ class Backups(GuildCog):
             Container(accent_color=C_SUCCESS)
             .text("## Backup created")
             .text(f"**ID** `{bid}`\n"
-                  f"**Roles** {len(data['roles'])}  -  **Channels** {len(data['channels'])}"
-                  + (f"  -  **Messages** {data['message_count']}" if msg_limit else ""))
+                  f"**Roles** {len(data['roles'])} · **Channels** {len(data['channels'])}"
+                  + (f" · **Messages** {data['message_count']}" if msg_limit else ""))
             .separator()
             .text(f"-# Restore it with `{self._p()}backup load {bid}` "
                   f"(this overwrites the server).")
@@ -132,8 +132,8 @@ class Backups(GuildCog):
                 f"Create one with `{self._p()}backup create`."))
             return
         lines = [
-            f"`{r['id']}`  -  **{r['guild_name']}**  -  {r.get('message_count', 0)} msgs  "
-            f"-  {fmt_ts(r['created_at'])}"
+            f"`{r['id']}` · **{r['guild_name']}** · {r.get('message_count', 0)} msgs · "
+            f"{fmt_ts(r['created_at'])}"
             for r in rows
         ]
         panel = (
