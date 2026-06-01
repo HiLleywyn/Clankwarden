@@ -1,12 +1,12 @@
-# Clanktank -- Claude Code Guidelines
+# Clanksimus Prime -- Claude Code Guidelines
 
-> This branch is the **Clanktank** build: the `.clank` scammer/bot containment
-> system plus the full moderation + audit-logging suite, with the server-tool
-> features (backups, templates, chatlogs, sync, import/export) split out into a
-> separate bot. If you are looking at backups/templates/etc., you are on the
-> wrong branch.
+> This repo is the **Clanksimus Prime** mod bot: the `.clank` scammer/bot
+> containment system plus the full moderation + audit-logging suite. The
+> server-tool features (backups, templates, chatlogs, sync, import/export) live
+> in a separate bot, **Recycler** (`hilleywyn/recycler`). If you are looking at
+> backups/templates/etc., you are in the wrong repo.
 
-Clanktank is a Discord containment + moderation bot (the `.clank` group, the
+Clanksimus Prime is a Discord containment + moderation bot (the `.clank` group, the
 `mod` command set, the `modlog` audit system, `.set` settings and the `.init`
 setup wizard), built on the shared **bot framework** (`hilleywyn/framework`)
 and templated for the **Sojourns** platform via `sojourns.json`.

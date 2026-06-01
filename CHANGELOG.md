@@ -1,5 +1,20 @@
 # Changelog
 
+## [clanksimus-prime] -- 2026-06-01
+
+### Changes
+- **Brand the mod bot consistently as "Clanksimus Prime."** The split kept the
+  `Clanksimus Prime` name in the help/about UI but had switched the manifest to
+  `Clanktank`; the manifest `slug`/`name` are now `clanksimus-prime` /
+  `Clanksimus Prime` (matching the displayed name and the repo), and the
+  `main.py` fallback app name follows. The `.clank` "tank" feature naming
+  (channels, settings keys, DB columns, mod-log category) is unchanged -- only
+  the bot's product identity was aligned.
+- **Fix stale feature copy.** The `.help` header and `.about` panel still
+  advertised the server-tool features (backups, templates, chatlogs, sync) that
+  moved to Recycler. They now describe this bot's actual surface: moderation,
+  audit logging, guided setup and `.clank` containment.
+
 ## [clanktank build] -- 2026-06-01
 
 ### Changes

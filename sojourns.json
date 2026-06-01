@@ -1,8 +1,8 @@
 {
   "manifest_version": "1",
   "bot": {
-    "slug": "clanktank",
-    "name": "Clanktank",
+    "slug": "clanksimus-prime",
+    "name": "Clanksimus Prime",
     "version": "1.0.0",
     "description": "Scammer/bot account containment (.clank) plus a full moderation and audit-logging suite, rendered in Discord Components V2.",
     "author": "HiLleywyn",

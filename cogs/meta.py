@@ -36,9 +36,10 @@ class Meta(BaseCog):
         panel = (
             Container(accent_color=C_INFO)
             .text("## About Clanksimus Prime")
-            .text("A free, open moderation and server management bot. Backups, "
-                  "templates, chatlogs, sync, and the clank containment system, "
-                  "all in one place.")
+            .text("A free, open moderation bot: ban, kick, timeout, warn and "
+                  "purge, categorized mod-log audit trails, a guided setup "
+                  "wizard, and the .clank account-containment system, all in "
+                  "one place.")
             .separator()
             .section(f"**Servers** {guilds:,}\n**Members** {users:,}",
                      accessory=Container.accessory_button(
