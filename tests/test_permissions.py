@@ -1,9 +1,15 @@
 """Tests for the permission model: minimal invite, audit, mod gating."""
 from __future__ import annotations
 
-import discord
+import discord  # noqa: F401
+import pytest
 
-from clanklib import permissions as perms
+# permissions.py imports the framework (core.framework.cogs); skip cleanly where
+# the framework isn't installed (the dependency-light CI job), matching the
+# convention used by the other framework-dependent tests.
+pytest.importorskip("core.framework.cogs")
+
+from clanklib import permissions as perms  # noqa: E402
 
 
 def test_invite_requests_minimal_not_administrator():
