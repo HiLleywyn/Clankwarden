@@ -57,5 +57,4 @@ Per-guild overrides for the containment channels can also be set with
 
 | Build arg | Default | What it is |
 |---|---|---|
-| `GITHUB_TOKEN` | -- | Read token for the private `hilleywyn/framework` repo. |
 | `FRAMEWORK_REF` | `main` | Git ref of the framework to install. |

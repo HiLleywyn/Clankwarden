@@ -1,12 +1,14 @@
 # Clanksimus Prime -- single-image deploy (Railway-ready).
 #
-# Build args:
+# Zero-config: the framework (hilleywyn/framework, public) is pulled from its
+# default branch and auto-refreshes on every build (see step 1). No build args,
+# tokens, or env vars are required to deploy.
+#
+# Optional build arg:
 #   FRAMEWORK_REF  git ref of hilleywyn/framework to install (default: main)
-#   GITHUB_TOKEN   token with read access to the private framework repo
 #
 # Example:
-#   docker build --build-arg GITHUB_TOKEN=ghp_xxx \
-#                --build-arg FRAMEWORK_REF=main -t clanksimus .
+#   docker build -t clanksimus .
 FROM python:3.12-slim-bookworm AS base
 
 ENV PYTHONUNBUFFERED=1 \
@@ -21,20 +23,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         git curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# 1. Install the shared framework from its (private) repo. The token is only
-#    used at build time and is never baked into the final layers' env.
+# 1. Install the shared framework from its public repo.
+#
+# AUTOMATIC cache-busting -- no operator action, no env vars, no Railway access.
+# The framework is installed from git in a layer Docker would normally cache by
+# command text, so a redeploy could ship an OLD framework even after
+# hilleywyn/framework@main advances. To avoid that, ADD the GitHub commits API
+# response for the ref *first*: its body changes the moment a new commit lands
+# on the ref, which invalidates this layer's cache on its own. When nothing has
+# changed upstream the layer is reused (fast); when it has, pip reinstalls the
+# current framework. Every build therefore tracks the live ref hands-free.
 ARG FRAMEWORK_REF=main
-ARG GITHUB_TOKEN=
-# Cache-bust this layer whenever the upstream ref moves. The pip line's command
-# text never changes, so Docker would otherwise reuse a stale cached layer and
-# install an OLD framework even after hilleywyn/framework@main advances. Pass
-# --build-arg FRAMEWORK_BUST=<changing value> (a timestamp or the upstream commit
-# sha) to force a fresh pull. ``--no-cache-dir`` also stops pip's own wheel cache
-# from serving a stale build of the same ref.
-ARG FRAMEWORK_BUST=0
-RUN echo "framework ref=${FRAMEWORK_REF} bust=${FRAMEWORK_BUST}" \
-    && pip install --no-cache-dir --force-reinstall \
-        "bot-framework @ git+https://${GITHUB_TOKEN:+${GITHUB_TOKEN}@}github.com/hilleywyn/framework.git@${FRAMEWORK_REF}"
+ADD https://api.github.com/repos/hilleywyn/framework/commits/${FRAMEWORK_REF} /tmp/framework.commit
+RUN pip install --no-cache-dir --force-reinstall \
+        "bot-framework @ git+https://github.com/hilleywyn/framework.git@${FRAMEWORK_REF}"
 
 # 2. App-level dependencies.
 COPY requirements.txt .

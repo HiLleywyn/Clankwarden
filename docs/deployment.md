@@ -72,8 +72,8 @@ force full certificate verification.
 The runtime lives in the **private** `hilleywyn/framework` repo. Every install
 path needs read access to it:
 
-- **Local**: a Personal Access Token with `repo` read scope, or SSH access.
-- **Docker / Railway**: pass that token as the `GITHUB_TOKEN` build arg.
+- **Local**: none -- the framework repo is public.
+- **Docker / Railway**: none -- the image pulls the public framework automatically.
 
 The `FRAMEWORK_REF` setting (default `main`) picks which git ref to install.
 
@@ -167,23 +167,17 @@ Best for a reproducible single-container deploy anywhere Docker runs.
 
 ### B.1 Build
 
-The image installs the framework from git at build time, so pass a read token:
+The image installs the framework (public) from git at build time and refreshes
+it automatically, so no build args are required:
 
 ```bash
-docker build \
-  --build-arg GITHUB_TOKEN=<token-with-repo-read> \
-  --build-arg FRAMEWORK_REF=main \
-  -t clanksimus:latest .
+docker build -t clanksimus:latest .
 ```
 
 What the build does, in order: installs system deps -> installs the framework
 from git -> installs `requirements.txt` -> copies the source -> **runs the test
 suite and fails the build if it is red**. A green build is a smoke test that the
 code imports and the manifest is valid.
-
-> The `GITHUB_TOKEN` is only used in the build layer that runs `pip install`.
-> It is not written into the final image's environment. Still, prefer
-> `--secret` / BuildKit for hardened pipelines.
 
 ### B.2 Run
 
@@ -221,7 +215,6 @@ services:
     build:
       context: .
       args:
-        GITHUB_TOKEN: ${GITHUB_TOKEN}
         FRAMEWORK_REF: main
     environment:
       DISCORD_TOKEN: ${DISCORD_TOKEN}
@@ -240,7 +233,7 @@ volumes:
 ```
 
 ```bash
-GITHUB_TOKEN=<token> DISCORD_TOKEN=<token> docker compose up -d --build
+DISCORD_TOKEN=<token> docker compose up -d --build
 docker compose logs -f bot
 ```
 
@@ -287,7 +280,6 @@ variables (Railway passes matching variables as Docker build args):
 
 | Build variable | Value |
 |---|---|
-| `GITHUB_TOKEN` | a token with read access to `hilleywyn/framework` |
 | `FRAMEWORK_REF` | `main` (or a tag/branch) |
 
 ### C.5 Deploy
@@ -383,7 +375,7 @@ Run these regardless of pathway:
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| Build fails at `pip install bot-framework` | Bad/missing `GITHUB_TOKEN` or no access to `hilleywyn/framework` | Use a token with `repo` read scope; verify `FRAMEWORK_REF` exists. |
+| Build fails at `pip install bot-framework` | Network issue or a bad `FRAMEWORK_REF` | Retry; verify the ref exists on `hilleywyn/framework`. |
 | Build fails at the test stage | A real import/manifest error | Read the failing test output; fix before deploy (this is the gate working). |
 | `DISCORD_TOKEN is required` at boot | Token unset/empty | Set `DISCORD_TOKEN`. |
 | Boot hangs / DB errors | `DATABASE_URL` wrong or DB unreachable | Verify the DSN, host, and that the DB accepts the connection; for self-signed TLS leave `DB_SSL_VERIFY=0`. |
@@ -417,5 +409,4 @@ the full command list see [commands.md](commands.md).
 | `CLANK_ESCAPE_WAIT_MINUTES` | no | `8` | `.clank` reflection wait. |
 | `REDIS_URL` | no | - | Enables framework Redis features. |
 | `DB_SSL_VERIFY` | no | `0` | `1` forces full DB TLS verification. |
-| `GITHUB_TOKEN` (build) | yes | - | Read access to the framework repo. |
 | `FRAMEWORK_REF` (build) | no | `main` | Framework git ref to install. |
