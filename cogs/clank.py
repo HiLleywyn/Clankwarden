@@ -3,7 +3,7 @@ cogs/clanktank.py -- Clanktank: scammer and bot-account containment system.
 
 State machine
 -------------
-NORMAL -> CLANKER via ,clanker add. CLANKER -> NORMAL via ,clanker remove.
+NORMAL -> CLANKER via .clank add. CLANKER -> NORMAL via .clank remove.
 While CLANKER the user holds exactly one role, earns nothing, and cannot
 interact with any bot system. Disco responds with firmer containment
 notices as the score rises.
@@ -28,7 +28,7 @@ Evidence and intelligence
 - Account linking: compares usernames, display names, and message content
   against existing clankers using Jaccard token overlap. Connections share
   effective score for response tiering.
-- ,clanker scan: scan active clankers, or score a guarded role band without
+- .clank scan: scan active clankers, or score a guarded role band without
   auto-clanking anyone.
 - Audit log: every event written to clanker_audit_log with JSONB details.
 
@@ -235,7 +235,7 @@ _ESCAPE_KEYWORDS: frozenset[str] = frozenset({
     "how do i get out", "how do i escape", "how to escape", "how to get out",
     "how do i leave", "how do i get released", "how do i get free",
     "i want out", "want to leave", "want out of here", "get out of here",
-    "escape room", "clanker escape", "how do i start", "how do i begin",
+    "escape room", "clank escape", "clanker escape", "how do i start", "how do i begin",
     "what do i do", "how do i proceed", "how do i play",
 })
 
@@ -1194,7 +1194,7 @@ class Clanktank(commands.Cog):
         log.info("Clanktank ready: %d active clankers %d escape rooms", len(self._clanked), len(self._escape_msg_ids))
 
     async def _load_escape_thread_override(self) -> None:
-        """Load a runtime escape-thread override saved via ,clanker er setthread."""
+        """Load a runtime escape-thread override saved via .clank er setthread."""
         try:
             row = await self.bot.db.fetch_one(
                 "SELECT clank_escape_thread FROM guild_settings "
@@ -1208,8 +1208,8 @@ class Clanktank(commands.Cog):
         """(Re)register persistent escape-room views for every active room.
 
         Returns (registered, cleared). Verifies each tracked message still
-        exists; nulls the pointer for any that don't so ,clanker escape can
-        recreate them. Safe to call live -- powers ,clanker er reload.
+        exists; nulls the pointer for any that don't so .clank escape can
+        recreate them. Safe to call live -- powers .clank er reload.
         """
         registered = 0
         cleared = 0
@@ -1226,7 +1226,7 @@ class Clanktank(commands.Cog):
                     continue
                 mid = int(mid)
                 # Verify the message still exists -- if it was deleted (or this is a
-                # stale dev embed), clear the pointer so ,clanker escape recreates it.
+                # stale dev embed), clear the pointer so .clank escape recreates it.
                 if thread is not None:
                     try:
                         await thread.fetch_message(mid)
@@ -2388,7 +2388,7 @@ class Clanktank(commands.Cog):
             )
 
         title = f"Cluster [{cluster_id}]: {label}"
-        footer_hint = f"cluster id:{cluster_id} -- ,clanker cluster cleave {cluster_id} to mass-clank"
+        footer_hint = f"cluster id:{cluster_id} -- .clank cluster cleave {cluster_id} to mass-clank"
         if len(text_pages) == 1:
             await ctx.reply(
                 view=_v2(title, color=C_NAVY, desc=text_pages[0], footer=footer_hint),
@@ -2881,9 +2881,13 @@ class Clanktank(commands.Cog):
             return True
         if not await self.is_clanker(ctx.author.id, ctx.guild.id):
             return True
-        # Allow clankers to use ,clanker escape to find their escape room thread.
-        root = getattr(ctx.command, "root_parent", ctx.command) if ctx.command else None
-        if getattr(root, "name", "") == "clanker" and getattr(ctx.command, "name", "") == "escape":
+        # A contained user MUST be able to run `.clank escape` (alias
+        # `.clanker escape`) to reach their escape room -- it is the only way
+        # out. The group was renamed to `clank` (with `clanker` as an alias), so
+        # match the qualified name rather than a single hardcoded root name.
+        cmd = ctx.command
+        root = getattr(cmd, "root_parent", cmd) if cmd else None
+        if getattr(root, "name", "") in ("clank", "clanker") and getattr(cmd, "name", "") == "escape":
             return True
         rec = await self._inc(
             ctx.author.id, ctx.guild.id,
@@ -3129,7 +3133,7 @@ class Clanktank(commands.Cog):
                 if score >= _JOIN_ALERT_THRESHOLD:
                     _sj_fields.append(("Pattern score", f"{score:.0%}"))
                 if cluster_id_added:
-                    _sj_fields.append(("Cluster", f"[{cluster_id_added}] -- use ,clanker cluster {cluster_id_added}"))
+                    _sj_fields.append(("Cluster", f"[{cluster_id_added}] -- use .clank cluster {cluster_id_added}"))
                 if reasons:
                     _sj_fields.append(("Matched patterns", ", ".join(reasons[:6])))
 
@@ -3182,7 +3186,7 @@ class Clanktank(commands.Cog):
 
                 _sj_fields.append(("Names", ", ".join(names)))
                 _sj_footer = (
-                    f"Pre-added to cluster {cluster_id_added}. Use ,clanker cluster cleave {cluster_id_added} to mass-clank."
+                    f"Pre-added to cluster {cluster_id_added}. Use .clank cluster cleave {cluster_id_added} to mass-clank."
                     if cluster_id_added else "Alert only -- no automatic action taken."
                 )
                 await self._log_mod(_v2(title, color=C_WARNING, fields=_sj_fields, footer=_sj_footer))
@@ -3440,7 +3444,7 @@ class Clanktank(commands.Cog):
             if any(kw in content_lower for kw in _ESCAPE_KEYWORDS):
                 try:
                     await message.reply(
-                        "run `,clanker escape` to get the link to your escape room "
+                        "run `.clank escape` to get the link to your escape room "
                         "-- work through the 7 stations to request release. "
                         "check your DMs if you missed the original link.",
                         mention_author=False,
@@ -3771,7 +3775,7 @@ class Clanktank(commands.Cog):
             )
             raise ValueError(f"{member} is a whitelisted scam hunter and is immune to auto-clank.")
 
-        # Server boosters are immune to auto-clank; manual ,clanker add may override.
+        # Server boosters are immune to auto-clank; manual .clank add may override.
         if not allow_booster and member.premium_since is not None:
             log.info(
                 "clanktank: skipping _do_clank for server booster uid=%s gid=%s",
@@ -4307,13 +4311,13 @@ class Clanktank(commands.Cog):
             log.debug("clanktank: _er_update_hint failed uid=%s step=%d", uid, step)
 
     def _escape_thread_id(self) -> int:
-        """Resolved escape-thread id: runtime override (,clanker er setthread) wins over env."""
+        """Resolved escape-thread id: runtime override (.clank er setthread) wins over env."""
         return self._escape_thread_override or Config.CLANK_ESCAPE_THREAD_ID
 
     async def _get_escape_thread(self, guild_id: int | None = None) -> discord.Thread | None:
         """Fetch the configured shared escape thread.
 
-        Order: runtime override (,clanker er setthread) -> per-guild setting
+        Order: runtime override (.clank er setthread) -> per-guild setting
         (clank_escape_thread, set via .set or Sojourns) -> env var.
         """
         tid = self._escape_thread_override
@@ -4362,7 +4366,7 @@ class Clanktank(commands.Cog):
 
         force_new   -- wipe any existing room and reset progress to station 1 (used on re-clank).
         send_intro  -- DM the educational "you've been placed in the Clank Tank" message + link
-                       (only on the initial clank, never on a plain ``,clanker escape``).
+                       (only on the initial clank, never on a plain ``.clank escape``).
         """
         uid, gid = member.id, member.guild.id
         existing = await self._er_get(uid, gid)
@@ -4385,7 +4389,7 @@ class Clanktank(commands.Cog):
             mid = existing.get("message_id")
 
             if not force_new and mid:
-                # ,clanker escape: reuse a healthy, current-code embed if one exists.
+                # .clank escape: reuse a healthy, current-code embed if one exists.
                 thread = await self._get_escape_thread()
                 if isinstance(thread, discord.Thread) and await self._er_message_healthy(thread, int(mid), uid):
                     if int(mid) not in self._escape_msg_ids:
@@ -4426,7 +4430,7 @@ class Clanktank(commands.Cog):
                 f"**How to get out:**\n"
                 f"1. Enable your DMs if they are off\n"
                 f"   *(Server Settings -> Privacy Settings -> Allow direct messages from server members)*\n"
-                f"2. Go to <#{tank_ch_id}> and run `,clanker escape`\n"
+                f"2. Go to <#{tank_ch_id}> and run `.clank escape`\n"
                 f"3. You will be shown a link to your escape room\n"
                 f"4. Complete all 8 stations\n"
                 f"5. You will be released automatically when done\n\n"
@@ -4517,7 +4521,7 @@ class Clanktank(commands.Cog):
                 await member.send(
                     f"\U0001f517 **Your escape room is ready.**\n\n"
                     f"Jump to your case: {jump}\n\n"
-                    f"-# Run `,clanker escape` in <#{tank_ch_id}> any time to get this link again."
+                    f"-# Run `.clank escape` in <#{tank_ch_id}> any time to get this link again."
                 )
             except Exception:
                 pass
@@ -5007,7 +5011,7 @@ class Clanktank(commands.Cog):
                     ("Connected accounts", "\n".join(conn_lines) if conn_lines else "none"),
                     ("Evidence preview", evidence_preview),
                 ],
-                footer="use ,clanker evidence @user for full evidence log",
+                footer="use .clank evidence @user for full evidence log",
             ),
             mention_author=False,
         )
@@ -5058,7 +5062,7 @@ class Clanktank(commands.Cog):
                     ("Reason / context", rec.get("clank_context") or rec.get("reason") or "None"),
                     *([("Flags", ", ".join(flags))] if flags else []),
                 ],
-                footer=f"use ,clanker info @user for full details",
+                footer=f"use .clank info @user for full details",
             ),
             mention_author=False,
         )
@@ -5432,7 +5436,7 @@ class Clanktank(commands.Cog):
             # Role-band scan path
             pass  # falls through to the band scan block below
         elif len(tokens) == 1 and _try_role(tokens[0]) is not None:
-            await ctx.reply_error("Provide two roles for a band scan: `,clanker scan @baseRole @stopRole`.")
+            await ctx.reply_error("Provide two roles for a band scan: `.clank scan @baseRole @stopRole`.")
             return
         else:
             # User-targeted scan
@@ -5440,7 +5444,7 @@ class Clanktank(commands.Cog):
             return
 
         if base_role is None or stop_role is None:
-            await ctx.reply_error("Use `,clanker scan @baseRole @stopRole`, for example `,clanker scan @users @level15`.")
+            await ctx.reply_error("Use `.clank scan @baseRole @stopRole`, for example `.clank scan @users @level15`.")
             return
 
         if not ctx.guild.chunked:
@@ -5595,7 +5599,7 @@ class Clanktank(commands.Cog):
                 ("Clusters found", str(len(cluster_ids))),
                 *([("Cluster IDs", ", ".join(f"[{cid}]" for cid in cluster_ids[:12]))] if cluster_ids else []),
             ],
-            footer="Review clusters with ,clanker clusters -- cleave only after staff confirms.",
+            footer="Review clusters with .clank clusters -- cleave only after staff confirms.",
         )
         try:
             await status_msg.edit(view=result_view)
@@ -5711,7 +5715,7 @@ class Clanktank(commands.Cog):
                     ("New connections", str(len(found))),
                     *([("Clusters", f"{clusters_formed} formed, {clusters_updated} updated")] if clusters_formed or clusters_updated else []),
                 ],
-                footer="Use ,clanker clusters to review and ,clanker cluster cleave <id> to act.",
+                footer="Use .clank clusters to review and .clank cluster cleave <id> to act.",
             )
 
         try:
@@ -5870,7 +5874,7 @@ class Clanktank(commands.Cog):
                     desc=(
                         "No clusters formed yet.\n\n"
                         f"Clusters auto-form when {_CLUSTER_MIN_SIZE}+ connected accounts are detected. "
-                        "Use `,clanker scan` to detect connections across all active clankers."
+                        "Use `.clank scan` to detect connections across all active clankers."
                     ),
                 ),
                 mention_author=False,
@@ -5936,7 +5940,7 @@ class Clanktank(commands.Cog):
                     ("Clusters after", str(new_cluster_count)),
                     ("New clusters formed", str(formed)),
                 ],
-                footer="Use ,clanker clusters to review the updated groups.",
+                footer="Use .clank clusters to review the updated groups.",
             ),
             mention_author=False,
         )
@@ -5949,7 +5953,7 @@ class Clanktank(commands.Cog):
             action = args[0].lower()
             if action in {"add", "remove", "rm"}:
                 if len(args) < 2:
-                    await ctx.reply_error(f"Use `,clanker cluster {cluster_id} {action} @user`.")
+                    await ctx.reply_error(f"Use `.clank cluster {cluster_id} {action} @user`.")
                     return
                 try:
                     member = await commands.MemberConverter().convert(ctx, args[1])
@@ -5975,13 +5979,13 @@ class Clanktank(commands.Cog):
                 "Cluster Management",
                 color=C_NAVY,
                 fields=[
-                    (",clanker cluster <id>", "Review members, patterns, and confidence."),
-                    (",clanker cluster <id> add @user", "Add someone to a cluster for review."),
-                    (",clanker cluster <id> remove @user", "Remove someone from a cluster."),
-                    (",clanker cluster <id> label <name>", "Give the cluster a human-readable name."),
-                    (",clanker cluster cleave <id>", "Mass-clank all eligible members after confirmation."),
+                    (".clank cluster <id>", "Review members, patterns, and confidence."),
+                    (".clank cluster <id> add @user", "Add someone to a cluster for review."),
+                    (".clank cluster <id> remove @user", "Remove someone from a cluster."),
+                    (".clank cluster <id> label <name>", "Give the cluster a human-readable name."),
+                    (".clank cluster cleave <id>", "Mass-clank all eligible members after confirmation."),
                 ],
-                footer="Use ,clanker clusters to see all clusters for this server.",
+                footer="Use .clank clusters to see all clusters for this server.",
             ),
             mention_author=False,
         )
@@ -6491,7 +6495,7 @@ class Clanktank(commands.Cog):
                     ("Hunters whitelisted", str(len(ids))),
                     ("Hunters", hunters_str[:1000]),
                 ],
-                footer="Use ,clanker hunter channel #channel -- ,clanker hunter add @user -- ,clanker hunter remove @user",
+                footer="Use .clank hunter channel #channel -- .clank hunter add @user -- .clank hunter remove @user",
             ),
             mention_author=False,
         )
@@ -6581,7 +6585,7 @@ class Clanktank(commands.Cog):
         s   = await self.bot.db.get_guild_settings(ctx.guild.id)
         ids = [int(x) for x in (s.get("scam_hunter_ids") or [])]
         if not ids:
-            await ctx.reply_error("No scam hunters configured. Use `,clanker hunter add @user`.")
+            await ctx.reply_error("No scam hunters configured. Use `.clank hunter add @user`.")
             return
         lines = []
         for hid in ids:
@@ -6768,7 +6772,7 @@ class Clanktank(commands.Cog):
                 color=C_WARNING,
                 desc="\n".join(lines),
                 footer=(
-                    "Pass a number to auto-clank: `,clanker clamp clutch 5`"
+                    "Pass a number to auto-clank: `.clank clamp clutch 5`"
                     if max_clank is None else f"Will clank up to {max_clank}."
                 ),
             ),
@@ -7183,7 +7187,7 @@ class Clanktank(commands.Cog):
         _notice = await ctx.reply(
             view=_v2(
                 color=C_INFO,
-                desc="run `,clanker escape` to get the link to your escape room -- work through the 8 stations to request release. check your DMs if you missed the original link.",
+                desc="run `.clank escape` to get the link to your escape room -- work through the 8 stations to request release. check your DMs if you missed the original link.",
             ),
             mention_author=False,
             no_autodelete=True,
@@ -7329,11 +7333,11 @@ class Clanktank(commands.Cog):
             await ctx.reply_error("You need Manage Roles permission.")
             return
         if thread is None:
-            await ctx.reply_error("Escape thread is not configured or not reachable. Set it with `,clanker er setthread`.")
+            await ctx.reply_error("Escape thread is not configured or not reachable. Set it with `.clank er setthread`.")
             return
         if not await ctx.confirm(
             f"Delete ALL bot messages in {thread.mention}? Active clankers will lose their current embeds "
-            "(they can run `,clanker escape` to get a fresh one)."
+            "(they can run `.clank escape` to get a fresh one)."
         ):
             return
         deleted = 0
@@ -7348,7 +7352,7 @@ class Clanktank(commands.Cog):
                         pass
         except Exception:
             pass
-        # Drop dangling message pointers so the next ,clanker escape recreates fresh embeds.
+        # Drop dangling message pointers so the next .clank escape recreates fresh embeds.
         try:
             await self.bot.db.execute(
                 "UPDATE clank_escape SET message_id=NULL WHERE guild_id=$1 AND completed_at IS NULL",
@@ -7360,7 +7364,7 @@ class Clanktank(commands.Cog):
             view=_v2(
                 "Escape Room -- Purged",
                 color=C_SUCCESS,
-                desc=f"Deleted **{deleted}** message(s) from {thread.mention}. Active clankers can re-run `,clanker escape`.",
+                desc=f"Deleted **{deleted}** message(s) from {thread.mention}. Active clankers can re-run `.clank escape`.",
             ),
             mention_author=False,
             delete_after=30.0,
@@ -7413,8 +7417,8 @@ class Clanktank(commands.Cog):
             target = ctx.channel
         if not isinstance(target, discord.Thread):
             await ctx.reply_error(
-                "Run this inside the escape thread, or pass a thread: `,clanker er setthread #thread`.\n"
-                "Pass `0` is not supported -- use `,clanker er setthread clear` to revert to the env var."
+                "Run this inside the escape thread, or pass a thread: `.clank er setthread #thread`.\n"
+                "Pass `0` is not supported -- use `.clank er setthread clear` to revert to the env var."
             )
             return
         try:
@@ -7775,7 +7779,7 @@ class _ClusterListView(_SortableView):
                 lines.append(
                     f"**[{cid}] {label}**\n"
                     f"-# {members} members | {conf:.0%} confidence | {status}{formed_str}\n"
-                    f"-# `,clanker cluster {cid}` -- detail  |  `,clanker cluster cleave {cid}` -- cleave"
+                    f"-# `.clank cluster {cid}` -- detail  |  `.clank cluster cleave {cid}` -- cleave"
                 )
             self._pages.append((f"Clusters ({total} total)", "\n\n".join(lines)))
 
