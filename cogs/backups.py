@@ -47,8 +47,14 @@ class Backups(ModCog):
     @commands.has_guild_permissions(administrator=True)
     @commands.bot_has_guild_permissions(administrator=True)
     async def backup_create(self, ctx: DiscoContext, *, options: str = "") -> None:
-        """Create a backup. Add ``chatlog`` or ``chatlog:100`` to also archive
-        recent messages per channel."""
+        """Create a full backup: settings, roles and their permissions,
+        categories, channels with their permission overwrites, and recent
+        messages per channel.
+
+        A backup captures the whole server by default. To skip message
+        archiving (a structure-only backup), add ``no-messages``. To capture
+        more or fewer messages per channel, add ``messages:200``.
+        """
         count = await self.db.backups.count_for_owner(ctx.author.id)
         max_per_user = setting_int(self.bot, "BACKUP_MAX_PER_USER", 50)
         if count >= max_per_user:
@@ -57,10 +63,18 @@ class Backups(ModCog):
                 f"{max_per_user}). Delete one with `{self._p()}backup delete <id>`."))
             return
 
-        msg_limit = 0
-        m = re.search(r"chatlog:?(\d+)?", options, re.IGNORECASE)
-        if m:
-            msg_limit = int(m.group(1)) if m.group(1) else serializer.DEFAULT_MESSAGE_LIMIT
+        # Messages are captured by default. ``no-messages`` makes it
+        # structure-only; ``messages:N`` (or the legacy ``chatlog:N``) sets the
+        # per-channel cap.
+        opts_lower = options.lower()
+        if "no-messages" in opts_lower or "no-chatlog" in opts_lower:
+            msg_limit = 0
+        else:
+            m = re.search(r"(?:messages|chatlog):?(\d+)?", opts_lower)
+            if m and m.group(1):
+                msg_limit = min(int(m.group(1)), serializer.MAX_MESSAGE_LIMIT)
+            else:
+                msg_limit = serializer.DEFAULT_MESSAGE_LIMIT
 
         async with ctx.typing():
             data = await serializer.serialize_guild(
@@ -77,10 +91,13 @@ class Backups(ModCog):
             Container(accent_color=C_SUCCESS)
             .text("## Backup created")
             .text(f"**ID** `{bid}`\n"
-                  f"**Roles** {len(data['roles'])} · **Channels** {len(data['channels'])}"
-                  + (f" · **Messages** {data['message_count']}" if msg_limit else ""))
+                  f"**Roles** {len(data['roles'])} · "
+                  f"**Categories** {len(data['categories'])} · "
+                  f"**Channels** {len(data['channels'])}"
+                  + (f" · **Messages** {data['message_count']}" if msg_limit
+                     else " · structure only"))
             .separator()
-            .text(f"-# Restore it with `{self._p()}backup load {bid}` "
+            .text(f"-# Restore the whole thing with `{self._p()}backup load {bid}` "
                   f"(this overwrites the server).")
         )
         await send_v2(ctx, panel)
@@ -89,6 +106,10 @@ class Backups(ModCog):
     @commands.has_guild_permissions(administrator=True)
     @commands.bot_has_guild_permissions(administrator=True)
     async def backup_load(self, ctx: DiscoContext, backup_id: str, *, flags: str = "") -> None:
+        """Restore the whole backup: roles and their permissions, categories,
+        channels with their overwrites, server settings, and the archived
+        messages. Add ``structure-only`` to skip replaying messages.
+        """
         row = await self._owned(ctx, backup_id)
         if row is None:
             return
@@ -97,14 +118,33 @@ class Backups(ModCog):
             title="Load backup?",
             body=(f"This will **delete all current channels and roles** and rebuild "
                   f"`{ctx.guild.name}` from backup `{backup_id}` "
-                  f"(taken {fmt_ts(row['created_at'])}). This cannot be undone."),
+                  f"(taken {fmt_ts(row['created_at'])}), including roles, "
+                  f"permissions, channels, and archived messages. This cannot "
+                  f"be undone."),
         )
         if not ok:
             return
 
+        # Full restore by default; ``structure-only`` / ``no-messages`` skips
+        # the message replay.
+        fl = flags.lower()
         opts = serializer.RestoreOptions(
-            restore_messages="messages" in flags.lower() or "chatlog" in flags.lower(),
+            restore_messages=not ("structure-only" in fl or "no-messages" in fl),
         )
+
+        # Surface permission problems up front rather than letting every
+        # create_role / create_channel fail silently into the error list.
+        me = ctx.guild.me
+        if not me.guild_permissions.administrator and not (
+            me.guild_permissions.manage_roles and me.guild_permissions.manage_channels
+        ):
+            await send_v2(ctx, Container(accent_color=C_ERROR)
+                          .text("## Cannot restore")
+                          .text("I need **Manage Roles** and **Manage Channels** to "
+                                "rebuild the server. Run "
+                                f"`{self._p()}setup` to see exactly what to grant."))
+            return
+
         async with ctx.typing():
             stats = await serializer.restore_guild(ctx.guild, row["data"], opts)
 
@@ -120,6 +160,10 @@ class Backups(ModCog):
             .text(stats.summary())
         )
         if stats.errors:
+            panel.separator()
+            panel.text(f"**{len(stats.errors)} item(s) could not be restored** "
+                       "(usually because the bot's role is not high enough). "
+                       f"Run `{self._p()}setup` to check permissions.")
             panel.text("```\n" + "\n".join(stats.errors[:8])[:900] + "\n```")
         await send_v2(dest, panel)
 
