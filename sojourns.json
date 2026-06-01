@@ -59,11 +59,21 @@
         "id": "containment",
         "label": "Containment (.clank)",
         "fields": [
-          { "key": "CLANKER_ROLE_ID", "type": "discord_role", "label": "Clanker role" },
-          { "key": "CLANKTANK_CHANNEL_ID", "type": "discord_channel", "label": "Tank channel" },
-          { "key": "CLANKTANK_LOG_CHANNEL_ID", "type": "discord_channel", "label": "Mod log channel" },
-          { "key": "CLANK_ESCAPE_THREAD_ID", "type": "discord_channel", "label": "Escape-room thread" },
-          { "key": "CLANK_ESCAPE_WAIT_MINUTES", "type": "number", "label": "Reflection wait (minutes)", "default": 8, "min": 1, "max": 120 }
+          { "key": "CLANKER_ROLE_ID", "type": "discord_role", "label": "Clanker role", "help": "Containment role applied to clanked users." },
+          { "key": "CLANK_CATEGORY_ID", "type": "discord_channel", "label": "Clanker category", "help": "Category the containment channels live under." },
+          { "key": "CLANKTANK_CHANNEL_ID", "type": "discord_channel", "label": "Clanktank channel", "help": "Channel clankers are confined to." },
+          { "key": "CLANKTANK_LOG_CHANNEL_ID", "type": "discord_channel", "label": "Clanker log channel", "help": "Log for containment (clank/escape) events." },
+          { "key": "CLANK_ESCAPE_THREAD_ID", "type": "discord_channel", "label": "Escape-room thread", "help": "Shared thread where escape-room cases are posted." },
+          { "key": "CLANK_ESCAPE_WAIT_MINUTES", "type": "number", "label": "Reflection period (minutes)", "default": 5, "min": 1, "max": 120, "help": "Mandatory reflection wait before an escape unlocks." },
+          { "key": "CLANKER_HUNTER_ROLE_ID", "type": "discord_role", "label": "Clanker hunter role", "help": "Members of this role can report scammers in the hunter channel." },
+          { "key": "CLANKER_HUNTER_CHANNEL_ID", "type": "discord_channel", "label": "Clanker hunter channel", "help": "Channel where hunters post reports that auto-clank flagged users." }
+        ]
+      },
+      {
+        "id": "moderation",
+        "label": "Moderation logs",
+        "fields": [
+          { "key": "MOD_LOG_CHANNEL_ID", "type": "discord_channel", "label": "Mod log channel", "help": "Comprehensive moderation log for every tracked event." }
         ]
       }
     ]

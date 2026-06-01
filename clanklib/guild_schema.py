@@ -33,10 +33,16 @@ class GuildField:
 # feature keys we want exposed.
 GUILD_FIELDS: tuple[GuildField, ...] = (
     GuildField("prefix", "string", "Command prefix", "1-5 chars; overrides the global prefix in this server.", max_len=5),
-    GuildField("log_channel", "discord_channel", "Log channel", "Where the bot posts audit/event logs."),
-    GuildField("clanktank_channel", "discord_channel", "Containment channel", "The .clank tank channel."),
-    GuildField("clanktank_log_channel", "discord_channel", "Containment log", "Mod log for containment events."),
+    GuildField("log_channel", "discord_channel", "Log channel", "Where the bot posts general audit/event logs."),
+    GuildField("mod_log_channel", "discord_channel", "Mod log channel", "Comprehensive moderation log for every tracked event."),
+    GuildField("clanker_role", "discord_role", "Clanker role", "The containment role applied to clanked users."),
+    GuildField("clank_category", "discord_channel", "Clanker category", "Category the containment channels live under."),
+    GuildField("clanktank_channel", "discord_channel", "Clanktank channel", "The .clank tank channel clankers are confined to."),
+    GuildField("clanktank_log_channel", "discord_channel", "Clanker log channel", "Log channel for containment (clank/escape) events."),
     GuildField("clank_escape_thread", "discord_channel", "Escape-room thread", "Shared .clank escape-room thread."),
+    GuildField("clank_escape_wait_minutes", "number", "Reflection period (minutes)", "Mandatory reflection wait before an escape unlocks.", min=1, max=120),
+    GuildField("scam_hunter_role", "discord_role", "Clanker hunter role", "Members of this role can report scammers in the hunter channel."),
+    GuildField("scam_report_channel", "discord_channel", "Clanker hunter channel", "Channel where hunters post reports that auto-clank flagged users."),
 )
 
 FIELDS_BY_KEY: dict[str, GuildField] = {f.key: f for f in GUILD_FIELDS}

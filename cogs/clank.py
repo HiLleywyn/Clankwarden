@@ -1272,17 +1272,41 @@ class Clanktank(commands.Cog):
     async def is_clanker(self, user_id: int, guild_id: int) -> bool:
         return (user_id, guild_id) in self._clanked
 
-    async def _is_whitelisted_hunter(self, user_id: int, guild_id: int) -> bool:
-        """True if this user is a whitelisted scam hunter for the guild.
-
-        Whitelisted hunters are immune to every automatic clank path so that
-        staff can mention and coordinate with them freely; a manual moderator
-        clank can still override."""
+    async def _hunter_role_id(self, guild_id: int) -> int:
+        """The configured clanker-hunter role id for a guild (0 when unset)."""
         try:
-            s = await self.bot.db.get_guild_settings(guild_id)
+            return int(await self._guild_channel_id(
+                guild_id, "scam_hunter_role", Config.CLANKER_HUNTER_ROLE_ID))
         except Exception:
+            return 0
+
+    async def _is_hunter(self, member: discord.Member | None, guild_id: int) -> bool:
+        """True if ``member`` holds the configured clanker-hunter role.
+
+        Membership is checked live off the member's roles -- there is no stored
+        per-user list, so a hunter is exactly whoever wears the role right now.
+        """
+        if member is None:
             return False
-        return int(user_id) in {int(x) for x in (s.get("scam_hunter_ids") or [])}
+        rid = await self._hunter_role_id(guild_id)
+        if not rid:
+            return False
+        return any(int(r.id) == rid for r in getattr(member, "roles", []))
+
+    async def _is_whitelisted_hunter(self, user_id: int, guild_id: int) -> bool:
+        """True if this user holds the clanker-hunter role for the guild.
+
+        Hunters are immune to every automatic clank path so staff can mention
+        and coordinate with them freely; a manual moderator clank still
+        overrides. Backed by the hunter role (role-based, not a user list)."""
+        rid = await self._hunter_role_id(guild_id)
+        if not rid:
+            return False
+        guild = self.bot.get_guild(int(guild_id))
+        if guild is None:
+            return False
+        member = guild.get_member(int(user_id))
+        return await self._is_hunter(member, guild_id)
 
     # -- Public AI context ----------------------------------------------------
 
@@ -1348,15 +1372,18 @@ class Clanktank(commands.Cog):
 
     # -- Role utilities -------------------------------------------------------
 
-    def _clanker_role(self, guild: discord.Guild) -> discord.Role | None:
-        rid = Config.CLANKER_ROLE_ID
+    async def _clanker_role(self, guild: discord.Guild) -> discord.Role | None:
+        rid = await self._guild_channel_id(
+            guild.id, "clanker_role", Config.CLANKER_ROLE_ID)
         if rid:
-            return guild.get_role(rid)
+            role = guild.get_role(int(rid))
+            if role:
+                return role
         return discord.utils.get(guild.roles, name=_CLANKER_ROLE_NAME)
 
-    def _allowed_role_ids(self, guild: discord.Guild) -> set[int]:
+    async def _allowed_role_ids(self, guild: discord.Guild) -> set[int]:
         allowed = {guild.default_role.id}
-        role = self._clanker_role(guild)
+        role = await self._clanker_role(guild)
         if role:
             allowed.add(role.id)
         return allowed
@@ -2463,6 +2490,17 @@ class Clanktank(commands.Cog):
                 return got
         return int(env_value or 0)
 
+    async def _escape_wait_minutes(self, guild_id: int | None = None) -> int:
+        """Per-guild mandatory reflection wait, falling back to the env default.
+
+        Stored as ``clank_escape_wait_minutes`` in guild_settings (set in
+        Discord with ``.set reflection`` or in the Sojourns web UI). Clamped to
+        a sane 1..120 range so a bad value can never wedge the escape room."""
+        val = await self._guild_channel_id(
+            guild_id, "clank_escape_wait_minutes", Config.CLANK_ESCAPE_WAIT_MINUTES)
+        mins = int(val or Config.CLANK_ESCAPE_WAIT_MINUTES or 5)
+        return max(1, min(120, mins))
+
     async def _tank_channel(self, guild_id: int | None = None) -> discord.TextChannel | None:
         cid = await self._guild_channel_id(
             guild_id, "clanktank_channel", Config.CLANKTANK_CHANNEL_ID)
@@ -2556,7 +2594,7 @@ class Clanktank(commands.Cog):
     # -- Scam hunter channel --------------------------------------------------
 
     async def _scam_hunter_check(self, message: discord.Message) -> None:
-        """Auto-clank any users reported by a whitelisted scam hunter."""
+        """Auto-clank any users reported by a member of the clanker-hunter role."""
         if message.guild is None:
             return
         gid = message.guild.id
@@ -2572,8 +2610,13 @@ class Clanktank(commands.Cog):
         if int(getattr(message.channel, "id", 0) or 0) != int(report_ch):
             return
 
-        hunter_ids: list[int] = [int(x) for x in (s.get("scam_hunter_ids") or [])]
-        if uid not in hunter_ids:
+        # Role-based: the reporter must currently hold the configured hunter
+        # role. No per-user whitelist -- a hunter is whoever wears the role.
+        hunter_role_id = await self._hunter_role_id(gid)
+        if not hunter_role_id:
+            return
+        author_member = message.guild.get_member(uid)
+        if not await self._is_hunter(author_member, gid):
             return
 
         # Targets come ONLY from what the hunter explicitly typed: a literal
@@ -2614,9 +2657,15 @@ class Clanktank(commands.Cog):
 
         targets.discard(uid)
         targets.discard(self.bot.user.id if self.bot.user else 0)
-        # Hunters are immune -- they can report but cannot be auto-clanked by
-        # each other's reports in this channel.
-        targets -= set(hunter_ids)
+        # Fellow hunters are immune -- a hunter can report but cannot be
+        # auto-clanked by another hunter's report in this channel. Drop any
+        # target that currently wears the hunter role.
+        if targets:
+            immune = {
+                t for t in targets
+                if await self._is_hunter(message.guild.get_member(t), gid)
+            }
+            targets -= immune
 
         if not targets:
             try:
@@ -2912,7 +2961,7 @@ class Clanktank(commands.Cog):
         if not await self.is_clanker(uid, gid):
             return
 
-        allowed = self._allowed_role_ids(after.guild)
+        allowed = await self._allowed_role_ids(after.guild)
         extra = {r.id for r in after.roles} - allowed
         if not extra:
             return
@@ -3206,7 +3255,7 @@ class Clanktank(commands.Cog):
                 log.debug("clanktank: join check failed uid=%s", uid, exc_info=True)
             return
 
-        clanker_role = self._clanker_role(member.guild)
+        clanker_role = await self._clanker_role(member.guild)
         if clanker_role is None:
             log.warning("clanktank: rejoin detected but no clanker role found gid=%s", gid)
             return
@@ -3674,7 +3723,7 @@ class Clanktank(commands.Cog):
             member = guild.get_member(uid)
             if not member:
                 continue
-            allowed = self._allowed_role_ids(guild)
+            allowed = await self._allowed_role_ids(guild)
             extra = {r.id for r in member.roles} - allowed
             if not extra:
                 continue
@@ -3761,7 +3810,7 @@ class Clanktank(commands.Cog):
         guild = member.guild
         uid, gid = member.id, guild.id
 
-        clanker_role = self._clanker_role(guild)
+        clanker_role = await self._clanker_role(guild)
         if clanker_role is None:
             raise ValueError(f'No role named "{_CLANKER_ROLE_NAME}" found.')
 
@@ -4161,7 +4210,7 @@ class Clanktank(commands.Cog):
         if guild:
             member = guild.get_member(user_id)
             if member:
-                clanker_role = self._clanker_role(guild)
+                clanker_role = await self._clanker_role(guild)
                 if clanker_role and clanker_role in member.roles:
                     try:
                         await member.remove_roles(clanker_role, reason="Clanktank: released")
@@ -5742,7 +5791,7 @@ class Clanktank(commands.Cog):
             return
 
         guild = ctx.guild
-        clanker_role = self._clanker_role(guild)
+        clanker_role = await self._clanker_role(guild)
         if clanker_role is None:
             await ctx.reply_error(
                 f'No role named "{_CLANKER_ROLE_NAME}" found.'
@@ -6474,28 +6523,31 @@ class Clanktank(commands.Cog):
     @clanker_group.group(name="hunter", invoke_without_command=True)
     @guild_only
     async def clanker_hunter_group(self, ctx: DiscoContext) -> None:
-        """Show scam hunter channel and whitelist configuration."""
+        """Show the clanker-hunter role and report-channel configuration."""
         if not ctx.author.guild_permissions.manage_roles:
             await ctx.reply_error("You need Manage Roles permission.")
             return
-        s       = await self.bot.db.get_guild_settings(ctx.guild.id)
-        ch_id   = s.get("scam_report_channel")
-        ch_str  = f"<#{ch_id}>" if ch_id else "not configured"
-        ids     = [int(x) for x in (s.get("scam_hunter_ids") or [])]
-        if ids:
-            hunters_str = ", ".join(f"<@{i}>" for i in ids)
+        s        = await self.bot.db.get_guild_settings(ctx.guild.id)
+        ch_id    = s.get("scam_report_channel")
+        ch_str   = f"<#{ch_id}>" if ch_id else "not configured"
+        role_id  = await self._hunter_role_id(ctx.guild.id)
+        role     = ctx.guild.get_role(role_id) if role_id else None
+        if role_id and role:
+            role_str = f"{role.mention} ({len(role.members)} member(s))"
+        elif role_id:
+            role_str = f"`{role_id}` (role missing)"
         else:
-            hunters_str = "none"
+            role_str = "not configured"
         await ctx.reply(
             view=_v2(
-                "Scam Hunter Settings",
+                "Clanker Hunter Settings",
                 color=C_AMBER,
                 fields=[
                     ("Report channel", ch_str),
-                    ("Hunters whitelisted", str(len(ids))),
-                    ("Hunters", hunters_str[:1000]),
+                    ("Hunter role", role_str),
                 ],
-                footer="Use .clank hunter channel #channel -- .clank hunter add @user -- .clank hunter remove @user",
+                footer="Set with .clank hunter channel #channel -- .clank hunter role @role. "
+                       "Anyone wearing the role can report in the channel.",
             ),
             mention_author=False,
         )
@@ -6514,7 +6566,7 @@ class Clanktank(commands.Cog):
         if channel:
             await ctx.reply_success(
                 f"Scam report channel set to {channel.mention}. "
-                "Whitelisted hunters who post user IDs or @mentions there "
+                "Members of the hunter role who post user IDs or @mentions there "
                 "will trigger automatic clanking.",
                 title="Hunter Channel Set",
             )
@@ -6525,80 +6577,61 @@ class Clanktank(commands.Cog):
             new_id, ctx.guild.id, ctx.author.id,
         )
 
-    @clanker_hunter_group.command(name="add")
+    @clanker_hunter_group.command(name="role")
     @guild_only
-    async def clanker_hunter_add(self, ctx: DiscoContext, user: discord.Member) -> None:
-        """Add a user to the scam hunter whitelist."""
+    async def clanker_hunter_role_cmd(
+        self, ctx: DiscoContext, role: discord.Role | None = None
+    ) -> None:
+        """Set or clear the clanker-hunter role. Omit role to clear."""
         if not ctx.author.guild_permissions.manage_roles:
             await ctx.reply_error("You need Manage Roles permission.")
             return
-        if user.bot:
-            await ctx.reply_error("Cannot add a bot to the hunter whitelist.")
-            return
-        s   = await self.bot.db.get_guild_settings(ctx.guild.id)
-        ids = [int(x) for x in (s.get("scam_hunter_ids") or [])]
-        if user.id in ids:
-            await ctx.reply_error(f"{user.mention} is already a hunter.")
-            return
-        if len(ids) >= 50:
-            await ctx.reply_error("Hunter whitelist is full (max 50).")
-            return
-        ids.append(user.id)
-        await self.bot.db.update_guild_setting(ctx.guild.id, "scam_hunter_ids", ids)
-        await ctx.reply_success(
-            f"{user.mention} added to the scam hunter whitelist. "
-            "Their reports in the scam report channel will auto-clank flagged users.",
-            title="Hunter Added",
-        )
+        new_id = role.id if role else None
+        await self.bot.db.update_guild_setting(ctx.guild.id, "scam_hunter_role", new_id)
+        if role:
+            await ctx.reply_success(
+                f"Clanker-hunter role set to {role.mention}. Anyone wearing it can "
+                "report scammers in the hunter channel; they are also immune to "
+                "automatic clanking.",
+                title="Hunter Role Set",
+            )
+        else:
+            await ctx.reply_success("Clanker-hunter role cleared.", title="Hunter Role Cleared")
         log.info(
-            "clanktank: hunter added uid=%s gid=%s actor=%s",
-            user.id, ctx.guild.id, ctx.author.id,
-        )
-
-    @clanker_hunter_group.command(name="remove")
-    @guild_only
-    async def clanker_hunter_remove(self, ctx: DiscoContext, user: discord.Member) -> None:
-        """Remove a user from the scam hunter whitelist."""
-        if not ctx.author.guild_permissions.manage_roles:
-            await ctx.reply_error("You need Manage Roles permission.")
-            return
-        s   = await self.bot.db.get_guild_settings(ctx.guild.id)
-        ids = [int(x) for x in (s.get("scam_hunter_ids") or [])]
-        if user.id not in ids:
-            await ctx.reply_error(f"{user.mention} is not in the hunter whitelist.")
-            return
-        ids.remove(user.id)
-        await self.bot.db.update_guild_setting(ctx.guild.id, "scam_hunter_ids", ids)
-        await ctx.reply_success(f"{user.mention} removed from the scam hunter whitelist.", title="Hunter Removed")
-        log.info(
-            "clanktank: hunter removed uid=%s gid=%s actor=%s",
-            user.id, ctx.guild.id, ctx.author.id,
+            "clanktank: hunter role set role=%s gid=%s actor=%s",
+            new_id, ctx.guild.id, ctx.author.id,
         )
 
     @clanker_hunter_group.command(name="list")
     @guild_only
     async def clanker_hunter_list(self, ctx: DiscoContext) -> None:
-        """List all scam hunters in this server."""
+        """List everyone currently wearing the clanker-hunter role."""
         if not ctx.author.guild_permissions.manage_roles:
             await ctx.reply_error("You need Manage Roles permission.")
             return
-        s   = await self.bot.db.get_guild_settings(ctx.guild.id)
-        ids = [int(x) for x in (s.get("scam_hunter_ids") or [])]
-        if not ids:
-            await ctx.reply_error("No scam hunters configured. Use `.clank hunter add @user`.")
+        role_id = await self._hunter_role_id(ctx.guild.id)
+        role    = ctx.guild.get_role(role_id) if role_id else None
+        if not role:
+            await ctx.reply_error(
+                "No clanker-hunter role configured. Use `.clank hunter role @role`.")
             return
-        lines = []
-        for hid in ids:
-            m = ctx.guild.get_member(hid)
-            lines.append(f"<@{hid}>" + (f" -- {m.display_name}" if m else " (not in server)"))
-        ch_id  = s.get("scam_report_channel")
+        members = [m for m in role.members if not m.bot]
+        if not members:
+            await ctx.reply_error(
+                f"{role.mention} has no members yet. Assign it to your hunters.")
+            return
+        lines = [f"<@{m.id}> -- {m.display_name}" for m in members[:50]]
+        if len(members) > 50:
+            lines.append(f"...and {len(members) - 50} more")
+        s_ch   = await self.bot.db.get_guild_settings(ctx.guild.id)
+        ch_id  = s_ch.get("scam_report_channel")
         ch_str = f"<#{ch_id}>" if ch_id else "not configured"
         await ctx.reply(
             view=_v2(
-                f"Scam Hunters ({len(ids)})",
+                f"Clanker Hunters ({len(members)})",
                 color=C_AMBER,
                 desc="\n".join(lines),
-                fields=[("Report channel", ch_str)],
+                fields=[("Hunter role", role.mention), ("Report channel", ch_str)],
             ),
             mention_author=False,
         )
@@ -7262,7 +7295,7 @@ class Clanktank(commands.Cog):
                     ("Active rooms (DB)", f"{db_active} ({db_with_msg} with embeds)"),
                     ("Registered views (memory)", str(len(self._escape_msg_ids))),
                     ("Clankers in this guild", str(clanked_here)),
-                    ("Station-5 wait", f"{Config.CLANK_ESCAPE_WAIT_MINUTES} min"),
+                    ("Station-5 wait", f"{await self._escape_wait_minutes(gid)} min"),
                 ],
                 footer="reload re-registers buttons | reset <user> rebuilds a room | purge wipes the thread",
             ),
@@ -7953,7 +7986,8 @@ class _ClankerHelpView(discord.ui.LayoutView):
                 f"`CLANKTANK_LOG_CHANNEL_ID` -- mod log channel (optional)\n"
                 f"`CLANKER_ROLE_ID` -- the Clanker role ID (required)\n"
                 f"`CLANK_ESCAPE_THREAD_ID` -- shared public escape thread; or set it live with `{p}clanker er setthread`\n"
-                f"`CLANK_ESCAPE_WAIT_MINUTES` -- station 5 waiting room delay in minutes (default: 8)"
+                f"`CLANK_ESCAPE_WAIT_MINUTES` -- station 5 waiting room delay in minutes (default: 5; "
+                f"per-server override via {p}set reflection or the web UI)"
             ),
         ]
 
@@ -8501,8 +8535,12 @@ class _EscapeRoomView(discord.ui.LayoutView):
         import re as _re
         normalized = " ".join(_re.sub(r"[^a-z0-9 ]", "", raw.lower()).split())
         if normalized == _ER_OATH_CANONICAL:
-            wait_until = time.time() + Config.CLANK_ESCAPE_WAIT_MINUTES * 60
-            await self._advance(interaction, 4, {**self._data, "wait_until": wait_until})
+            wait_mins = await self._cog._escape_wait_minutes(self._gid)
+            wait_until = time.time() + wait_mins * 60
+            await self._advance(
+                interaction, 4,
+                {**self._data, "wait_until": wait_until, "wait_mins": wait_mins},
+            )
         else:
             fails = int(self._data.get("oath_fails", 0)) + 1
             self._data = {**self._data, "oath_fails": fails}
@@ -8529,7 +8567,7 @@ class _EscapeRoomView(discord.ui.LayoutView):
             custom_id=f"er_s4_{self._uid}",
         )
         btn.callback = self._cb_reflected
-        wait_mins = Config.CLANK_ESCAPE_WAIT_MINUTES
+        wait_mins = int(self._data.get("wait_mins", Config.CLANK_ESCAPE_WAIT_MINUTES))
         return discord.ui.Container(
             self._header(), self._sep(),
             discord.ui.TextDisplay(

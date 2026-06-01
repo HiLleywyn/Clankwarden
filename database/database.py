@@ -152,14 +152,31 @@ class PgDatabase:
         for col, env in (
             ("clanktank_channel", "CLANKTANK_CHANNEL_ID"),
             ("clanktank_log_channel", "CLANKTANK_LOG_CHANNEL_ID"),
+            ("clank_escape_thread", "CLANK_ESCAPE_THREAD_ID"),
+            ("clanker_role", "CLANKER_ROLE_ID"),
+            ("clank_category", "CLANK_CATEGORY_ID"),
+            ("scam_hunter_role", "CLANKER_HUNTER_ROLE_ID"),
+            ("scam_report_channel", "CLANKER_HUNTER_CHANNEL_ID"),
+            ("mod_log_channel", "MOD_LOG_CHANNEL_ID"),
         ):
             if not d.get(col):
                 d[col] = int(os.getenv(env) or 0) or None
+        if not d.get("clank_escape_wait_minutes"):
+            d["clank_escape_wait_minutes"] = int(
+                os.getenv("CLANK_ESCAPE_WAIT_MINUTES") or 0) or None
         return d
 
     async def update_guild_setting(self, guild_id: int, key: str, value: Any) -> None:
-        """Set a real column (when ``key`` is one) or a ``features`` JSONB key."""
+        """Set a real column (when ``key`` is one) or a ``features`` JSONB key.
+
+        ``key`` is normalised through :data:`_GUILD_KEY_ALIASES` first so that
+        a setting pushed from the Sojourns control plane (manifest env-style
+        keys like ``CLANK_ESCAPE_THREAD_ID``) lands under the same canonical
+        lowercase key the cogs read (``clank_escape_thread``). Without this the
+        web UI and the bot use divergent namespaces and settings silently no-op.
+        """
         gid = int(guild_id)
+        key = _GUILD_KEY_ALIASES.get(key, key)
         await self.execute(
             "INSERT INTO guild_settings (guild_id) VALUES ($1) ON CONFLICT DO NOTHING", gid
         )
@@ -217,6 +234,26 @@ _GUILD_SETTING_COLUMNS: frozenset[str] = frozenset({
     "prefix", "bot_channels", "log_channel",
     "clanktank_channel", "clanktank_log_channel", "clank_escape_thread",
 })
+
+
+# Map the manifest's env-style setting keys (what the Sojourns web UI and the
+# control-plane heartbeat speak) onto the canonical lowercase per-guild keys the
+# cogs read. Any unmapped key passes through unchanged. This is the single
+# bridge between the two namespaces; keep it aligned with sojourns.json and
+# clanklib.guild_schema.GUILD_FIELDS.
+_GUILD_KEY_ALIASES: dict[str, str] = {
+    "PREFIX": "prefix",
+    "LOG_CHANNEL_ID": "log_channel",
+    "CLANKTANK_CHANNEL_ID": "clanktank_channel",
+    "CLANKTANK_LOG_CHANNEL_ID": "clanktank_log_channel",
+    "CLANK_ESCAPE_THREAD_ID": "clank_escape_thread",
+    "CLANK_ESCAPE_WAIT_MINUTES": "clank_escape_wait_minutes",
+    "CLANKER_ROLE_ID": "clanker_role",
+    "CLANK_CATEGORY_ID": "clank_category",
+    "CLANKER_HUNTER_ROLE_ID": "scam_hunter_role",
+    "CLANKER_HUNTER_CHANNEL_ID": "scam_report_channel",
+    "MOD_LOG_CHANNEL_ID": "mod_log_channel",
+}
 
 
 # Module-level singleton for the API layer (the bot uses its own instance).
