@@ -46,16 +46,6 @@ FEATURES: tuple[FeaturePerm, ...] = (
         "Read and reply in channels.",
     ),
     FeaturePerm(
-        "backups", "Backups and templates",
-        ("manage_channels", "manage_roles"),
-        "Recreate channels and roles when restoring a backup or template.",
-    ),
-    FeaturePerm(
-        "chatlog_sync", "Chatlog and sync",
-        ("manage_webhooks",),
-        "Create webhooks to replay archived messages and mirror channels.",
-    ),
-    FeaturePerm(
         "containment", "Containment (clank)",
         ("manage_roles", "manage_messages", "moderate_members", "ban_members"),
         "Apply the Clanker role, clean up messages, and act on offenders.",

@@ -30,14 +30,9 @@ _FALLBACK_COGS = [
     "cogs.mod",
     "cogs.setupwiz",
     "cogs.settings",
-    "cogs.backups",
-    "cogs.templates",
-    "cogs.chatlog",
-    "cogs.sync",
-    "cogs.importexport",
     "cogs.clank",
 ]
 
 
 if __name__ == "__main__":
-    run_manifest(fallback_cogs=_FALLBACK_COGS, fallback_app_name="Clanksimus Prime")
+    run_manifest(fallback_cogs=_FALLBACK_COGS, fallback_app_name="Clanktank")

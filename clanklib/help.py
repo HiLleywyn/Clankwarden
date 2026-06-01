@@ -24,21 +24,6 @@ class Section:
 # The feature map. ``commands`` are top-level command/group names; subcommands
 # are discovered live from each group. Keep keys stable (used as select values).
 SECTIONS: tuple[Section, ...] = (
-    Section("backups", "Backups", "\U0001F4E6",
-            "Full server snapshots you can restore or schedule.",
-            ("backup",)),
-    Section("templates", "Templates", "\U0001F4D0",
-            "Shareable, structure-only server blueprints.",
-            ("template",)),
-    Section("chatlog", "Chatlog", "\U0001F4DC",
-            "Archive a channel's messages and replay them.",
-            ("chatlog",)),
-    Section("sync", "Sync", "\U0001F501",
-            "Mirror messages and propagate bans between servers.",
-            ("sync",)),
-    Section("importexport", "Import / Export", "\U0001F4BE",
-            "Move backups in and out as portable files.",
-            ("export", "import")),
     Section("moderation", "Moderation", "\U0001F528",
             "Ban, kick, timeout, warn, purge, lock and more.",
             ("ban", "unban", "softban", "massban", "kick", "timeout", "untimeout",

@@ -1,9 +1,15 @@
-# Clanksimus Prime -- Claude Code Guidelines
+# Clanktank -- Claude Code Guidelines
 
-Clanksimus Prime is a free Discord server-management bot (backups, templates,
-chatlogs, sync, import/export, settings) plus the `.clank` containment subset,
-built on the shared **bot framework** (`hilleywyn/framework`) and templated for
-the **Sojourns** platform via `sojourns.json`.
+> This branch is the **Clanktank** build: the `.clank` scammer/bot containment
+> system plus the full moderation + audit-logging suite, with the server-tool
+> features (backups, templates, chatlogs, sync, import/export) split out into a
+> separate bot. If you are looking at backups/templates/etc., you are on the
+> wrong branch.
+
+Clanktank is a Discord containment + moderation bot (the `.clank` group, the
+`mod` command set, the `modlog` audit system, `.set` settings and the `.init`
+setup wizard), built on the shared **bot framework** (`hilleywyn/framework`)
+and templated for the **Sojourns** platform via `sojourns.json`.
 
 ## Default UI -- Components V2 (hard rule)
 
@@ -33,25 +39,24 @@ feature genuinely requires one (there are currently none). This needs
 - `sojourns.json` -- the manifest. Source of truth for cogs + settings; the
   Sojourns control plane reads the same file. Validate with
   `python -m core.framework.manifest sojourns.json`.
-- `cogs/` -- features. `clank.py` is the ported containment subset (group
-  `.clank`, alias `.clanker`); `modlog.py` is the comprehensive mod-logging cog
-  (gateway listeners + `.modlog` controls); the rest are the Components V2
-  server tools.
+- `cogs/` -- features. `clank.py` is the containment subset (group `.clank`,
+  alias `.clanker`); `mod.py` is the moderation command set; `modlog.py` is the
+  comprehensive mod-logging cog (gateway listeners + `.modlog` controls);
+  `setupwiz.py` is the `.init` wizard; `settings.py`/`meta.py` are config + help.
+  (The backups/templates/chatlog/sync/import-export cogs live on a separate bot.)
 - `clanklib/modlog.py` -- the centralized `ModLogger` (hung off the bot as
   `bot.modlog`). Every cog routes events through it (`modlog.security(...)`,
   `.mod(...)`, `.member(...)`, `.config(...)` ...); it persists to
   `mod_log_events` and renders Components V2 panels. New event sources should
   go through it, not ad-hoc channel sends.
-- `services/serializer.py` -- guild <-> JSON (the engine behind backups +
-  templates). Pure serialize; explicit `RestoreOptions` for the destructive
-  restore path.
 - `database/` -- a **slim** data plane (no economy): `database.py`
-  (`PgDatabase`: pool, file migration runner, query helpers, guild settings,
-  repo accessors), `base.py` (`PgBaseRepo`), feature repos, and
-  `migrations/*.sql` (the `0001-0005` server tables + the ported `0285+`
-  clank tables). The framework imports `database.Database` lazily.
+  (`PgDatabase`: pool, file migration runner, query helpers, the in-process
+  guild-settings cache, and the `guilds` repo), `base.py` (`PgBaseRepo`), and
+  `migrations/*.sql` (`0001` guild settings + the `0285+` clank tables + the
+  `0300+` mod-log tables). The framework imports `database.Database` lazily.
 - `api/v2/main.py` -- `create_app(bot)` FastAPI app the framework auto-mounts
-  on `API_PORT`; `/health` is public, `/api/v2/*` needs `X-API-Key`.
+  on `API_PORT`; `/health` is public, the `/api/v2/guilds/*` settings routes
+  need `X-API-Key`.
 
 ## Conventions
 
@@ -62,7 +67,7 @@ feature genuinely requires one (there are currently none). This needs
 - `log = logging.getLogger(__name__)` -- never `print()`.
 - Management commands require a guild permission (`manage_guild` /
   `administrator` / `manage_webhooks`) and the matching `bot_has_guild_permissions`.
-- No premium gating anywhere. Caps (e.g. `BACKUP_MAX_PER_USER`) are
+- No premium gating anywhere. Any caps are
   abuse-prevention only and configurable.
 
 ## Don't break the clank port

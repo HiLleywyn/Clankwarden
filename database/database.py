@@ -4,9 +4,8 @@ The framework instantiates ``database.Database`` lazily (see
 ``core.framework.bot.FrameworkBot._resolve_db_factory``) and calls
 ``connect()`` once at boot. Unlike Disco's economy data plane, this one is
 deliberately small: a connection pool, a file-based migration runner, the
-query helpers every cog/repo uses, per-guild settings, and a handful of
-feature repos (backups, templates, chatlog, sync) reached as attributes
-(``bot.db.backups`` ...).
+query helpers every cog uses, per-guild settings, and the ``guilds`` repo
+reached as an attribute (``bot.db.guilds``).
 
 JSONB columns are stored as text + ``::jsonb`` cast on write and decoded
 with ``json.loads`` on read, because the pool installs no JSON codec.
@@ -226,26 +225,6 @@ class PgDatabase:
     def guilds(self):  # type: ignore[no-untyped-def]
         from database.guilds import GuildRepo
         return self._repo("guilds", GuildRepo)
-
-    @property
-    def backups(self):  # type: ignore[no-untyped-def]
-        from database.backups import BackupRepo
-        return self._repo("backups", BackupRepo)
-
-    @property
-    def templates(self):  # type: ignore[no-untyped-def]
-        from database.templates import TemplateRepo
-        return self._repo("templates", TemplateRepo)
-
-    @property
-    def chatlog(self):  # type: ignore[no-untyped-def]
-        from database.chatlog import ChatlogRepo
-        return self._repo("chatlog", ChatlogRepo)
-
-    @property
-    def sync(self):  # type: ignore[no-untyped-def]
-        from database.sync import SyncRepo
-        return self._repo("sync", SyncRepo)
 
 
 # Real columns on guild_settings (everything else goes into the features JSONB).

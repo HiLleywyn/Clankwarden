@@ -1,10 +1,10 @@
 {
   "manifest_version": "1",
   "bot": {
-    "slug": "clanksimus-prime",
-    "name": "Clanksimus Prime",
+    "slug": "clanktank",
+    "name": "Clanktank",
     "version": "1.0.0",
-    "description": "Free server backups, templates, chatlogs, sync and containment, rendered in Discord Components V2.",
+    "description": "Scammer/bot account containment (.clank) plus a full moderation and audit-logging suite, rendered in Discord Components V2.",
     "author": "HiLleywyn",
     "repo": "hilleywyn/clanksimus-prime"
   },
@@ -26,11 +26,6 @@
     "cogs.mod",
     "cogs.setupwiz",
     "cogs.settings",
-    "cogs.backups",
-    "cogs.templates",
-    "cogs.chatlog",
-    "cogs.sync",
-    "cogs.importexport",
     "cogs.clank"
   ],
   "settings": {
@@ -42,13 +37,6 @@
           { "key": "PREFIX", "type": "string", "label": "Command prefix", "default": "." },
           { "key": "API_PORT", "type": "number", "label": "API / health port", "default": 8080 },
           { "key": "DISCORD_CLIENT_ID", "type": "string", "label": "Discord application (client) ID", "required": true, "help": "Required. From the Discord developer portal OAuth2 page; powers the Invite button." }
-        ]
-      },
-      {
-        "id": "backups",
-        "label": "Backups",
-        "fields": [
-          { "key": "BACKUP_MAX_PER_USER", "type": "number", "label": "Max backups per user", "default": 50, "min": 1, "max": 1000 }
         ]
       },
       {

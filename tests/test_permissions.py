@@ -16,8 +16,10 @@ def test_invite_requests_minimal_not_administrator():
     p = perms.required_bot_permissions()
     assert not p.administrator
     # the features it does need
-    assert p.manage_roles and p.manage_channels and p.manage_webhooks
+    assert p.manage_roles and p.manage_channels
     assert p.manage_messages and p.ban_members
+    # The slim Clanktank build creates no webhooks.
+    assert not p.manage_webhooks
     url = perms.invite_url(123456789012345678)
     assert "permissions=8&" not in url           # not Administrator
     assert f"permissions={p.value}" in url

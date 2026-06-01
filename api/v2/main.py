@@ -18,7 +18,6 @@ from fastapi.responses import JSONResponse
 from api.v2.exceptions import (
     AppError,
     ForbiddenError,
-    NotFoundError,
     UnauthorizedError,
     ValidationError,
 )
@@ -63,34 +62,6 @@ def create_app(bot: Any = None) -> FastAPI:
             "guilds": len(getattr(b, "guilds", []) or []),
             "ready": bool(getattr(b, "is_ready", lambda: False)()),
         }
-
-    # -- backups ---------------------------------------------------------------
-
-    @app.get("/api/v2/backups", dependencies=[Depends(require_key)])
-    async def list_backups(owner_id: int) -> dict[str, Any]:
-        rows = await _db().backups.list_for_owner(int(owner_id))
-        return {"backups": [dict(r) for r in rows]}
-
-    @app.get("/api/v2/backups/{backup_id}", dependencies=[Depends(require_key)])
-    async def get_backup(backup_id: str) -> dict[str, Any]:
-        row = await _db().backups.get(backup_id.lower())
-        if row is None:
-            raise NotFoundError(f"No backup {backup_id!r}.")
-        return dict(row)
-
-    # -- templates -------------------------------------------------------------
-
-    @app.get("/api/v2/templates", dependencies=[Depends(require_key)])
-    async def browse_templates(q: str = "", limit: int = 25) -> dict[str, Any]:
-        rows = await _db().templates.browse(query=q, limit=min(int(limit), 100))
-        return {"templates": [dict(r) for r in rows]}
-
-    @app.get("/api/v2/templates/{template_id}", dependencies=[Depends(require_key)])
-    async def get_template(template_id: str) -> dict[str, Any]:
-        row = await _db().templates.get(template_id.lower())
-        if row is None:
-            raise NotFoundError(f"No template {template_id!r}.")
-        return dict(row)
 
     # -- per-guild settings ----------------------------------------------------
 
