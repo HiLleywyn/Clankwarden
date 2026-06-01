@@ -35,10 +35,10 @@ pip install -r requirements.txt
 python main.py
 ```
 
-Or build the container (Railway-ready):
+Or build the container (Railway-ready -- no build args needed):
 
 ```bash
-docker build --build-arg GITHUB_TOKEN=<token> -t clanksimus .
+docker build -t clanksimus .
 docker run --env-file .env -p 8080:8080 clanksimus
 ```
 

@@ -2,19 +2,11 @@
 builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
 
-# The framework lives in a private repo, so the image needs a read token at
-# build time. Set FRAMEWORK_REF / GITHUB_TOKEN as Railway build variables.
-#
-# IMPORTANT: the framework is pip-installed from git in a Docker layer whose
-# command text never changes, so Docker caches it and a redeploy can keep an
-# OLD framework even after hilleywyn/framework@main advances. To pull the
-# current framework, set a Railway *build variable* FRAMEWORK_BUST to a NEW
-# value each time the framework changed (a timestamp or the framework commit
-# sha both work), or use Railway's "Redeploy without cache". The Dockerfile
-# force-reinstalls the framework when FRAMEWORK_BUST changes.
+# The framework (hilleywyn/framework) is public and the Dockerfile auto-refreshes
+# it on every build, so a plain redeploy always picks up the current framework --
+# no build variables, tokens, or "redeploy without cache" needed.
 [build.args]
 FRAMEWORK_REF = "main"
-FRAMEWORK_BUST = "0"
 
 [deploy]
 healthcheckPath = "/health"

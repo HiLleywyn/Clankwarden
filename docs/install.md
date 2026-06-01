@@ -64,7 +64,6 @@ the private repo passed as a build arg:
 
 ```bash
 docker build \
-  --build-arg GITHUB_TOKEN=<token-with-repo-read> \
   --build-arg FRAMEWORK_REF=main \
   -t clanksimus .
 
@@ -87,7 +86,6 @@ the container healthcheck.
    - Containment vars (`CLANKER_ROLE_ID`, `CLANKTANK_CHANNEL_ID`, ...) if you
      use `.clank`.
 4. Set **Build** variables for the private framework dependency:
-   - `GITHUB_TOKEN` -- token with read access to `hilleywyn/framework`.
    - `FRAMEWORK_REF` -- branch/tag/commit to install (e.g. `main`).
 5. Deploy. The healthcheck path is `/health`; first boot runs migrations.
 
