@@ -35,4 +35,4 @@ _FALLBACK_COGS = [
 
 
 if __name__ == "__main__":
-    run_manifest(fallback_cogs=_FALLBACK_COGS, fallback_app_name="Clanktank")
+    run_manifest(fallback_cogs=_FALLBACK_COGS, fallback_app_name="Clanksimus Prime")
