@@ -37,3 +37,22 @@
 ### Changes
 - Components V2 is the default UI across every command.
 - Templated for Sojourns via `sojourns.json` (validated in CI).
+- **Role-based clanker hunters**: The scam-hunter system now keys off a
+  configurable hunter role instead of a per-user whitelist. Anyone wearing the
+  role can report in the hunter channel and is immune to automatic clanking;
+  the old `.clank hunter add/remove` user commands are replaced by
+  `.clank hunter role @role`.
+- **Full config surface, Discord and web**: Every containment/moderation option
+  is now editable both in Discord (`.set ...`) and in the Sojourns web UI, and
+  the two surfaces write the same per-guild keys. New/exposed options: clanker
+  role, clanker category, clanktank channel, clanker log channel, escape-room
+  thread, reflection period, hunter role, hunter channel, mod log channel.
+- **Reflection period default is now 5 minutes** (was 8), and is configurable
+  per server (`.set reflection <minutes>` or the web UI).
+
+### Fixes
+- **Web-UI settings now actually apply**: settings pushed from the Sojourns
+  control plane used manifest env-style keys (`CLANK_ESCAPE_THREAD_ID`) while
+  the bot read canonical lowercase keys (`clank_escape_thread`); the two
+  namespaces never met, so values set in the web UI silently no-op'd. The DB
+  layer now normalises control-plane keys onto the canonical keys.
