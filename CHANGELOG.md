@@ -34,6 +34,15 @@
 - Installation quick-start, full configuration reference and a complete command
   reference.
 
+### Guided setup
+- **`.init`**: a one-command guided setup that creates and wires the bot's
+  roles, category, channels and escape-room thread. Pick which pieces to
+  provision (containment, logging, alerts, hunters) from a select, Confirm
+  before anything is created, then **Keep** or **Revert** -- Revert deletes
+  exactly what the run created (never anything pre-existing) and clears the
+  settings it wrote, returning you to the start. A mid-run failure auto-rolls
+  back. Uses Manage Roles + Manage Channels; no Administrator.
+
 ### Moderation commands
 - **Mod command set** (`cogs/mod.py`), Components V2 native: `ban`, `unban`,
   `softban`, `kick`, `timeout`/`mute`, `untimeout`/`unmute`, `warn`,
