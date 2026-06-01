@@ -14,6 +14,7 @@ from core.framework.components import Container, send_v2
 from core.framework.context import DiscoContext
 from core.framework.ui import C_ERROR, C_INFO, C_SUCCESS
 from clanklib import serializer
+from clanklib.settings import prefix as _prefix
 
 _ID_RE = re.compile(r"^[0-9a-f]{8}$")
 _MAX_IMPORT_BYTES = 8 * 1024 * 1024  # 8 MB
@@ -88,8 +89,7 @@ class ImportExport(GuildCog):
                       .text(f"-# Apply it with `{self._p()}backup load {bid}`."))
 
     def _p(self) -> str:
-        from core.config import Config
-        return Config.PREFIX or "."
+        return _prefix(self.bot)
 
 
 async def setup(bot: commands.Bot) -> None:

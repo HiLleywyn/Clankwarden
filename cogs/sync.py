@@ -15,6 +15,7 @@ from discord.ext import commands
 from core.framework.cogs import GuildCog
 from core.framework.components import Container, send_v2
 from core.framework.context import DiscoContext
+from clanklib.settings import prefix as _prefix
 from core.framework.ui import C_ERROR, C_INFO, C_SUCCESS, fmt_ts
 
 
@@ -141,8 +142,7 @@ class Sync(GuildCog):
                 continue
 
     def _p(self) -> str:
-        from core.config import Config
-        return Config.PREFIX or "."
+        return _prefix(self.bot)
 
 
 async def setup(bot: commands.Bot) -> None:

@@ -11,18 +11,15 @@ from core.framework.cogs import BaseCog
 from core.framework.components import Container, send_v2
 from core.framework.context import DiscoContext
 from core.framework.ui import C_INFO, C_NEUTRAL, C_SUCCESS
+from clanklib.settings import prefix as _prefix, setting
 
 _START = time.time()
-
-
-def _p() -> str:
-    return Config.PREFIX or "."
 
 
 class Meta(BaseCog):
     @commands.command(name="help", aliases=["commands", "h"])
     async def help_cmd(self, ctx: DiscoContext, *, topic: str = "") -> None:
-        p = _p()
+        p = _prefix(self.bot)
         panel = (
             Container(accent_color=C_INFO)
             .text("## Clanksimus Prime")
@@ -86,7 +83,7 @@ class Meta(BaseCog):
         await send_v2(ctx, panel)
 
     def _invite_url(self) -> str:
-        cid = getattr(self.bot.user, "id", None) or getattr(Config, "DISCORD_CLIENT_ID", "")
+        cid = getattr(self.bot.user, "id", None) or setting(self.bot, "DISCORD_CLIENT_ID", "")
         # Administrator (8) covers create/delete of roles, channels and webhooks.
         return (
             f"https://discord.com/oauth2/authorize?client_id={cid}"

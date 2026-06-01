@@ -3,6 +3,11 @@
 ## [main] -- 2026-06-01
 
 ### New Features
+- **Live settings**: Configuration changes made in the Sojourns control panel
+  now take effect immediately, without a redeploy. Cogs read runtime config
+  (prefix, backup cap, API key, client id) from the live settings layer rather
+  than a boot-time environment snapshot, so the Sojourns control link's
+  per-heartbeat sync actually reaches the commands.
 - **Server backups**: Create full, restorable guild snapshots (settings, roles,
   categories, channels, permission overwrites and optional recent messages),
   manually or on a recurring interval with rolling retention.
