@@ -35,6 +35,15 @@
   reference.
 
 ### Reliability
+- **`.init` now actually applies permissions**: the wizard makes the Clanker
+  role a real jail role -- it denies the role View Channel on every existing
+  channel (paced) and grants it only in the tank, so a clanked user (stripped to
+  @everyone + Clanker) can no longer see the rest of the server. Revert undoes
+  the lockdown along with everything else it created.
+- **Bulk ban + ban-sync backfill** on the paced runner: `massban <ids> [reason]`
+  (hierarchy-checked, deduped, capped, with a live progress message) and
+  `sync backfill <link_id>` to apply a source guild's existing bans to the
+  target -- both paced so they can't trigger a rate-limit ban.
 - **Paced mass actions**: bursting hundreds of clanks/bans/timeouts at once
   earns a multi-hour Cloudflare 429 (we hit a 2h ban cleaving 500 accounts). A
   new `BulkRunner` (`clanklib/ratelimit.py`) serializes and paces big batches,

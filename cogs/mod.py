@@ -19,7 +19,7 @@ import discord
 from discord.ext import commands
 
 from core.framework.cogs import GuildCog
-from clanklib.modlog import Severity
+from clanklib.modlog import Severity, _epoch
 from core.framework.components import Container, send_v2
 from core.framework.context import DiscoContext
 from core.framework.ui import C_ERROR, C_INFO, C_SUCCESS, C_WARNING
@@ -174,6 +174,90 @@ class Moderation(GuildCog):
                            summary=f"{member} was softbanned.", reason=reason)
         await self._ok(ctx, f"Softbanned **{member}** (24h of messages cleared).")
 
+    @commands.command(name="massban", aliases=["banmany", "mban"])
+    @commands.has_guild_permissions(ban_members=True)
+    @commands.bot_has_guild_permissions(ban_members=True)
+    async def massban(self, ctx: DiscoContext, *, raw: str) -> None:
+        """Ban many users by id/mention at once, paced to avoid rate limits.
+
+        Usage: `massban 111 222 333 raid spam` -- numbers are ids, the rest is
+        the reason. Members above you (or the bot) are skipped."""
+        ids: list[int] = []
+        reason_parts: list[str] = []
+        for tok in raw.split():
+            digits = "".join(c for c in tok if c.isdigit())
+            if digits and digits == tok.strip("<@!># "):
+                ids.append(int(digits))
+            elif digits and len(digits) >= 17:
+                ids.append(int(digits))
+            else:
+                reason_parts.append(tok)
+        ids = list(dict.fromkeys(ids))  # de-dupe, keep order
+        reason = " ".join(reason_parts) or "Mass ban"
+        if not ids:
+            await self._err(ctx, "Give at least one user id or mention to ban.")
+            return
+        if len(ids) > 1000:
+            await self._err(ctx, "That's over the 1000-id safety cap for one mass ban.")
+            return
+
+        # Drop anyone the invoker (or the bot) can't action.
+        targets: list[int] = []
+        skipped = 0
+        for uid in ids:
+            m = ctx.guild.get_member(uid)
+            if m is not None:
+                ok, _why = self._hierarchy_ok(ctx, m)
+                if not ok:
+                    skipped += 1
+                    continue
+            targets.append(uid)
+        if not targets:
+            await self._err(ctx, "Nothing to ban (every target was protected or invalid).")
+            return
+
+        confirmed = await ctx.confirm(
+            f"Ban {len(targets)} user(s)? Reason: {reason}"
+            + (f" ({skipped} protected target(s) skipped)" if skipped else ""),
+            timeout=60.0,
+        )
+        if not confirmed:
+            await self._err(ctx, "Mass ban cancelled.")
+            return
+
+        from clanklib.ratelimit import BulkRunner
+        progress = await ctx.send(view=Container(accent_color=C_WARNING).text(
+            f"Banning {len(targets)} user(s), paced to stay under Discord's limits...").build())
+
+        async def _ban_one(uid: int) -> None:
+            await ctx.guild.ban(discord.Object(id=uid),
+                                reason=f"massban by {ctx.author} ({ctx.author.id}): {reason}",
+                                delete_message_seconds=0)
+
+        async def _prog(res) -> None:
+            try:
+                await progress.edit(view=Container(accent_color=C_WARNING).text(
+                    f"Mass ban: {res.processed}/{res.total} "
+                    f"({res.succeeded} banned, {res.failed} failed)...").build())
+            except Exception:  # noqa: BLE001
+                pass
+
+        result = await BulkRunner().run(targets, _ban_one, progress=_prog)
+        await self._modlog(
+            ctx, "member.massban", target=None, severity=Severity.ALERT,
+            summary=f"Mass ban: {result.succeeded} banned, {result.failed} failed"
+                    + (", stopped early" if result.aborted else "") + f". Reason: {reason}",
+            count=result.succeeded, reason=reason, aborted=result.aborted)
+        body = (f"Banned **{result.succeeded}** user(s)."
+                + (f" {result.failed} failed." if result.failed else "")
+                + (f" {skipped} protected skipped." if skipped else "")
+                + (f"\n\n**Stopped early:** {result.abort_reason}" if result.aborted else ""))
+        try:
+            await progress.edit(view=Container(
+                accent_color=C_WARNING if result.aborted else C_SUCCESS).text(body).build())
+        except Exception:  # noqa: BLE001
+            await self._ok(ctx, body)
+
     # -- kick -----------------------------------------------------------------
 
     @commands.command(name="kick")
@@ -286,7 +370,7 @@ class Moderation(GuildCog):
             return
         lines = []
         for r in rows:
-            ts = int(r["created_at"].timestamp()) if r.get("created_at") else 0
+            ts = _epoch(r.get("created_at"))
             lines.append(f"`#{r['id']}` <t:{ts}:d> by <@{r['moderator_id']}> -- {r['reason']}")
         panel = (
             Container(accent_color=C_WARNING)
