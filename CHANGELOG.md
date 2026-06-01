@@ -53,13 +53,16 @@
   bulk-timeout.
 
 ### Guided setup
-- **`.init`**: a one-command guided setup that creates and wires the bot's
-  roles, category, channels and escape-room thread. Pick which pieces to
-  provision (containment, logging, alerts, hunters) from a select, Confirm
-  before anything is created, then **Keep** or **Revert** -- Revert deletes
-  exactly what the run created (never anything pre-existing) and clears the
-  settings it wrote, returning you to the start. A mid-run failure auto-rolls
-  back. Uses Manage Roles + Manage Channels; no Administrator.
+- **`.init`**: a one-command guided setup. Creates a **Clanktank** category
+  (the tank, its escape-room thread, and a staff-only clank-logs channel) with
+  the Clanker role locked out of every other channel, and a mod/admin-only
+  **Mod Logs** category with one auto-routed channel per log category
+  (security, moderation, member, message, ...). Pick which categories to
+  provision, Confirm before anything is created, then **Keep** or **Revert** --
+  Revert deletes exactly what the run created (never anything pre-existing) and
+  clears the settings it wrote. A mid-run failure auto-rolls back. Does not
+  touch the scam-report/hunter channel. Uses Manage Roles + Manage Channels; no
+  Administrator.
 
 ### Moderation commands
 - **Mod command set** (`cogs/mod.py`), Components V2 native: `ban`, `unban`,
