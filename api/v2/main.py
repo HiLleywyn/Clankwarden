@@ -15,7 +15,13 @@ from typing import Any
 from fastapi import Depends, FastAPI, Header, Request
 from fastapi.responses import JSONResponse
 
-from api.v2.exceptions import AppError, ForbiddenError, NotFoundError, UnauthorizedError
+from api.v2.exceptions import (
+    AppError,
+    ForbiddenError,
+    NotFoundError,
+    UnauthorizedError,
+    ValidationError,
+)
 
 
 def create_app(bot: Any = None) -> FastAPI:
@@ -86,4 +92,30 @@ def create_app(bot: Any = None) -> FastAPI:
             raise NotFoundError(f"No template {template_id!r}.")
         return dict(row)
 
+    # -- per-guild settings ----------------------------------------------------
+
+    @app.get("/api/v2/guilds/settings/schema", dependencies=[Depends(require_key)])
+    async def guild_settings_schema() -> dict[str, Any]:
+        from clanklib.guild_schema import schema_json
+        return schema_json()
+
+    @app.get("/api/v2/guilds/{guild_id}/settings", dependencies=[Depends(require_key)])
+    async def get_guild_settings(guild_id: int) -> dict[str, Any]:
+        from clanklib.guild_schema import public_view
+        row = await _db().get_guild_settings(int(guild_id))
+        return public_view(row)
+
+    @app.patch("/api/v2/guilds/{guild_id}/settings", dependencies=[Depends(require_key)])
+    async def patch_guild_settings(guild_id: int, body: dict[str, Any]) -> dict[str, Any]:
+        from clanklib.guild_schema import public_view, validate_guild_settings
+        coerced, errors = validate_guild_settings(body or {})
+        if errors:
+            raise ValidationError("; ".join(errors))
+        db = _db()
+        for key, value in coerced.items():
+            await db.update_guild_setting(int(guild_id), key, value)
+        row = await db.get_guild_settings(int(guild_id))
+        return {"ok": True, "settings": public_view(row)}
+
     return app
+

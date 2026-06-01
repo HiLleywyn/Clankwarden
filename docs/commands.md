@@ -84,3 +84,6 @@ With `CLANK_API_KEY` set, send it as the `X-API-Key` header.
 | `GET /api/v2/backups/{id}` | key | One backup (with its data). |
 | `GET /api/v2/templates?q=<query>` | key | Browse templates. |
 | `GET /api/v2/templates/{id}` | key | One template. |
+| `GET /api/v2/guilds/settings/schema` | key | The editable per-guild settings schema. |
+| `GET /api/v2/guilds/{guild_id}/settings` | key | A server's editable settings. |
+| `PATCH /api/v2/guilds/{guild_id}/settings` | key | Update a server's settings (validated, partial). |
