@@ -19,28 +19,11 @@ _START = time.time()
 class Meta(BaseCog):
     @commands.command(name="help", aliases=["commands", "h"])
     async def help_cmd(self, ctx: DiscoContext, *, topic: str = "") -> None:
-        p = _prefix(self.bot)
-        panel = (
-            Container(accent_color=C_INFO)
-            .text("## Clanksimus Prime")
-            .text("Server backups, templates, chatlogs, sync and containment "
-                  "-- everything free, rendered in Discord's Components V2.")
-            .separator()
-            .text(
-                f"**Backups**  `{p}backup create` `{p}backup load <id>` "
-                f"`{p}backup list` `{p}backup interval <hrs>`\n"
-                f"**Templates**  `{p}template create <name>` `{p}template browse` "
-                f"`{p}template load <id>`\n"
-                f"**Chatlog**  `{p}chatlog create [#ch] [limit]` `{p}chatlog load <id>`\n"
-                f"**Sync**  `{p}sync messages <#src> <#dst>` `{p}sync bans <src> <dst>`\n"
-                f"**Import/Export**  `{p}export <id>` `{p}import` (attach a backup file)\n"
-                f"**Settings**  `{p}settings` `{p}set <key> <value>`\n"
-                f"**Containment**  `{p}clank add @user` `{p}clank list` `{p}clank help`"
-            )
-            .separator()
-            .text(f"-# Prefix `{p}`  -  most management commands need the Manage Server permission.")
-        )
-        await send_v2(ctx, panel)
+        # The modern, dynamic help hub: a single Components V2 surface with a
+        # multi-select of feature sections whose commands are generated live
+        # from the command tree and combine seamlessly. Presented as one bot.
+        from cogs._help_view import send_help
+        await send_help(ctx)
 
     @commands.command(name="about", aliases=["info"])
     async def about_cmd(self, ctx: DiscoContext) -> None:
