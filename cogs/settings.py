@@ -87,6 +87,7 @@ class Settings(ModCog):
                 "Prefix must be 5 characters or fewer."))
             return
         await self.db.update_guild_setting(ctx.guild.id, "prefix", prefix)
+        await self._logcfg(ctx, "Prefix", f"`{prefix}`")
         await send_v2(ctx, Container(accent_color=C_SUCCESS).text(
             f"Prefix set to `{prefix}`."))
 
@@ -136,6 +137,7 @@ class Settings(ModCog):
     async def set_reflection(self, ctx: DiscoContext, minutes: str) -> None:
         if minutes.lower() in ("none", "off", "clear", "unset", "default"):
             await self.db.update_guild_setting(ctx.guild.id, "clank_escape_wait_minutes", None)
+            await self._logcfg(ctx, "Reflection period", "default (5 min)")
             await send_v2(ctx, Container(accent_color=C_SUCCESS).text(
                 "Reflection period reset to the default (5 minutes)."))
             return
@@ -150,15 +152,31 @@ class Settings(ModCog):
                 "Reflection period must be between 1 and 120 minutes."))
             return
         await self.db.update_guild_setting(ctx.guild.id, "clank_escape_wait_minutes", n)
+        await self._logcfg(ctx, "Reflection period", f"{n} min")
         await send_v2(ctx, Container(accent_color=C_SUCCESS).text(
             f"Reflection period set to {n} minute(s)."))
 
     # -- helpers --------------------------------------------------------------
 
+    async def _logcfg(self, ctx: DiscoContext, label: str, value: str) -> None:
+        """Record a configuration change in the mod log (best-effort)."""
+        modlog = getattr(self.bot, "modlog", None)
+        if modlog is None:
+            return
+        try:
+            await modlog.config(
+                "config.setting", ctx.guild.id, actor=ctx.author,
+                summary=f"{label} changed to {value}.",
+                metadata={"setting": label, "value": value},
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
     async def _set_channel(self, ctx: DiscoContext, key: str, value: str, label: str,
                            category: bool = False, thread: bool = False) -> None:
         if value.lower() in ("none", "off", "clear", "unset"):
             await self.db.update_guild_setting(ctx.guild.id, key, None)
+            await self._logcfg(ctx, label, "cleared")
             await send_v2(ctx, Container(accent_color=C_SUCCESS).text(f"{label} cleared."))
             return
         target = None
@@ -179,16 +197,19 @@ class Settings(ModCog):
                     f"Couldn't find that {kind}. Mention it or paste its id."))
                 return
             await self.db.update_guild_setting(ctx.guild.id, key, int(digits))
+            await self._logcfg(ctx, label, f"`{digits}`")
             await send_v2(ctx, Container(accent_color=C_SUCCESS).text(
                 f"{label} set to `{digits}`."))
             return
         await self.db.update_guild_setting(ctx.guild.id, key, target.id)
+        await self._logcfg(ctx, label, target.mention)
         await send_v2(ctx, Container(accent_color=C_SUCCESS).text(
             f"{label} set to {target.mention}."))
 
     async def _set_role(self, ctx: DiscoContext, key: str, value: str, label: str) -> None:
         if value.lower() in ("none", "off", "clear", "unset"):
             await self.db.update_guild_setting(ctx.guild.id, key, None)
+            await self._logcfg(ctx, label, "cleared")
             await send_v2(ctx, Container(accent_color=C_SUCCESS).text(f"{label} cleared."))
             return
         try:
@@ -200,10 +221,12 @@ class Settings(ModCog):
                     "Couldn't find that role. Mention it or paste its id."))
                 return
             await self.db.update_guild_setting(ctx.guild.id, key, int(digits))
+            await self._logcfg(ctx, label, f"`{digits}`")
             await send_v2(ctx, Container(accent_color=C_SUCCESS).text(
                 f"{label} set to `{digits}`."))
             return
         await self.db.update_guild_setting(ctx.guild.id, key, role.id)
+        await self._logcfg(ctx, label, role.mention)
         await send_v2(ctx, Container(accent_color=C_SUCCESS).text(
             f"{label} set to {role.mention}."))
 
