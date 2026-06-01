@@ -4662,7 +4662,14 @@ class Clanktank(commands.Cog):
     @commands.group(name="clank", aliases=["clanker"], invoke_without_command=True)
     @guild_only
     async def clanker_group(self, ctx: DiscoContext) -> None:
-        await self.clanker_help(ctx)
+        # Bare ``.clank`` opens the unified, modern help hub (one bot), not a
+        # containment-only page. The deep containment help stays at
+        # ``.clank help`` for operators who want just that.
+        try:
+            from cogs._help_view import send_help
+            await send_help(ctx)
+        except Exception:
+            await self.clanker_help(ctx)
 
     @clanker_group.command(name="help")
     @guild_only
