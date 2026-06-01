@@ -1,0 +1,14 @@
+# Clanksimus Prime runtime dependencies.
+#
+# The shared bot framework (package name: bot-framework) is installed
+# separately by the Dockerfile from its git repo -- it provides core/,
+# constants/, security/ and the database base, plus its own pinned deps
+# (aiohttp, redis, pydantic, fastapi, uvicorn, pillow, matplotlib, numpy ...).
+# The pins below are the app-level guarantees layered on top of it.
+
+discord.py>=2.6.0          # Components V2 (LayoutView / Container) -- the default UI
+asyncpg>=0.29.0            # Postgres data plane
+fastapi>=0.109.0           # embedded REST API
+uvicorn[standard]>=0.27.0
+matplotlib>=3.8.0          # .clank analytics charts
+numpy>=1.26.0              # .clank cluster analysis
