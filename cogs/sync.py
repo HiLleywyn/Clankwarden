@@ -61,7 +61,65 @@ class Sync(ModCog):
         )
         await send_v2(ctx, Container(accent_color=C_SUCCESS)
                       .text("## Ban sync created")
-                      .text(f"`#{link_id}` · bans from `{source_guild_id}` -> `{target_guild_id}`"))
+                      .text(f"`#{link_id}` · bans from `{source_guild_id}` -> `{target_guild_id}`")
+                      .separator()
+                      .text(f"-# New bans propagate live. Apply the source's *existing* "
+                            f"bans now with `{self._p()}sync backfill {link_id}`."))
+
+    @sync.command(name="backfill")
+    @commands.is_owner()
+    async def sync_backfill(self, ctx: DiscoContext, link_id: int) -> None:
+        """Apply a ban-sync link's source bans to the target, paced for safety."""
+        link = await self.db.sync.get(link_id) if hasattr(self.db.sync, "get") else None
+        if link is None:
+            rows = await self.db.sync.list_for_guild(ctx.guild.id)
+            link = next((r for r in rows if int(r["id"]) == link_id), None)
+        if link is None or link.get("kind") != "bans":
+            await send_v2(ctx, Container(accent_color=C_ERROR).text(
+                f"No ban-sync link `#{link_id}` found."))
+            return
+        source = self.bot.get_guild(int(link["source_id"]))
+        target = self.bot.get_guild(int(link["target_id"]))
+        if source is None or target is None:
+            await send_v2(ctx, Container(accent_color=C_ERROR).text(
+                "The bot must be in both the source and target guilds."))
+            return
+        try:
+            bans = [entry async for entry in source.bans()]
+        except discord.Forbidden:
+            await send_v2(ctx, Container(accent_color=C_ERROR).text(
+                "I can't read the source guild's ban list (need Ban Members there)."))
+            return
+        if not bans:
+            await send_v2(ctx, Container(accent_color=C_INFO).text("The source guild has no bans."))
+            return
+
+        from clanklib.ratelimit import BulkRunner
+        progress = await ctx.send(view=Container(accent_color=C_INFO).text(
+            f"Backfilling {len(bans)} ban(s) into {target.name}, paced...").build())
+
+        async def _ban_one(entry) -> None:
+            await target.ban(discord.Object(id=entry.user.id),
+                             reason=f"ban-sync backfill #{link_id} from {source.name}",
+                             delete_message_seconds=0)
+
+        async def _prog(res) -> None:
+            try:
+                await progress.edit(view=Container(accent_color=C_INFO).text(
+                    f"Ban backfill: {res.processed}/{res.total} "
+                    f"({res.succeeded} applied, {res.failed} failed)...").build())
+            except Exception:  # noqa: BLE001
+                pass
+
+        result = await BulkRunner().run(bans, _ban_one, progress=_prog)
+        body = (f"Applied **{result.succeeded}** ban(s) to {target.name}."
+                + (f" {result.failed} failed/already banned." if result.failed else "")
+                + (f"\n\n**Stopped early:** {result.abort_reason}" if result.aborted else ""))
+        try:
+            await progress.edit(view=Container(
+                accent_color=C_ERROR if result.aborted else C_SUCCESS).text(body).build())
+        except Exception:  # noqa: BLE001
+            await send_v2(ctx, Container(accent_color=C_SUCCESS).text(body))
 
     @sync.command(name="list", aliases=["ls"])
     async def sync_list(self, ctx: DiscoContext) -> None:

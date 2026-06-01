@@ -41,7 +41,7 @@ SECTIONS: tuple[Section, ...] = (
             ("export", "import")),
     Section("moderation", "Moderation", "\U0001F528",
             "Ban, kick, timeout, warn, purge, lock and more.",
-            ("ban", "unban", "softban", "kick", "timeout", "untimeout",
+            ("ban", "unban", "softban", "massban", "kick", "timeout", "untimeout",
              "warn", "warnings", "delwarn", "purge", "slowmode", "lock", "unlock")),
     Section("modlog", "Mod Log", "\U0001F4CB",
             "Categorized audit logging, timeline and case lookup.",

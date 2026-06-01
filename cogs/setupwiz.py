@@ -39,6 +39,8 @@ class _Created:
         self.roles: list[int] = []
         self.channels: list[int] = []      # includes the category + threads
         self.applied_keys: list[str] = []  # guild settings this run wrote
+        self.locked: list[int] = []        # existing channels we denied Clanker on
+        self.role_was_created: bool = False
 
 
 class InitView(discord.ui.LayoutView):
@@ -236,6 +238,7 @@ class SetupWizard(ModCog):
                     colour=discord.Colour(0x9b59b6), hoist=False, mentionable=False,
                     reason=reason)
                 view.created.roles.append(clanker_role.id)
+                view.created.role_was_created = True
                 view.summary_lines.append(f"Created role {clanker_role.mention}")
             else:
                 view.summary_lines.append(f"Reused existing role {clanker_role.mention}")
@@ -281,6 +284,11 @@ class SetupWizard(ModCog):
             except Exception:  # noqa: BLE001
                 view.summary_lines.append("Could not create the escape thread (set it later with .set escapethread)")
 
+            # Make the Clanker role an actual jail role: deny it View Channel on
+            # every existing channel so a clanked user (stripped to @everyone +
+            # Clanker) can only see the tank. Paced so a big server can't 429 us.
+            await self._lock_clanker_out(view, clanker_role, keep_category=category)
+
         if "logging" in sel:
             modlog_ch = await guild.create_text_channel(
                 "mod-log", category=category, reason=reason,
@@ -305,10 +313,61 @@ class SetupWizard(ModCog):
             view.summary_lines.append(f"Created {report_ch.mention} (hunter reports)")
             await self._set(view, "scam_report_channel", report_ch.id)
 
+    async def _lock_clanker_out(self, view: InitView, clanker_role: discord.Role,
+                                *, keep_category: discord.CategoryChannel | None) -> None:
+        """Deny the Clanker role View Channel on every existing channel except
+        the containment category we just made, paced to avoid rate limits."""
+        from clanklib.ratelimit import BulkRunner
+
+        keep_ids = set()
+        if keep_category is not None:
+            keep_ids.add(keep_category.id)
+            keep_ids.update(c.id for c in keep_category.channels)
+
+        deny = discord.PermissionOverwrite(view_channel=False)
+        reason = f"Clanksimus .init: lock Clanker out (by {view.ctx.author})"
+
+        # Only touch categories and channels that aren't already synced to a
+        # category we'll handle -- minimizes API calls on big servers.
+        targets: list[discord.abc.GuildChannel] = []
+        for ch in view.guild.channels:
+            if ch.id in keep_ids:
+                continue
+            if isinstance(ch, discord.CategoryChannel):
+                targets.append(ch)
+            elif getattr(ch, "permissions_synced", False):
+                continue  # inherits its category's overwrite
+            else:
+                targets.append(ch)
+
+        async def _lock_one(ch: discord.abc.GuildChannel) -> None:
+            await ch.set_permissions(clanker_role, overwrite=deny, reason=reason)
+            view.created.locked.append(ch.id)
+
+        result = await BulkRunner(base_delay=0.7).run(targets, _lock_one)
+        view.summary_lines.append(
+            f"Locked the Clanker role out of {result.succeeded} existing channel(s)"
+            + (f" (stopped early: {result.abort_reason})" if result.aborted else "")
+        )
+
     async def revert(self, view: InitView) -> None:
         """Delete exactly what this run created and clear the settings it wrote."""
         guild = view.guild
         reason = "Clanksimus .init revert"
+        # Undo the Clanker lockdown on existing channels. If this run created the
+        # Clanker role, deleting it below removes its overwrites for free; only a
+        # reused role needs its overwrites stripped explicitly.
+        if view.created.locked and not view.created.role_was_created:
+            role = discord.utils.get(guild.roles, name="Clanker")
+            if role is not None:
+                for cid in list(view.created.locked):
+                    ch = guild.get_channel(cid)
+                    if ch is not None:
+                        try:
+                            await ch.set_permissions(role, overwrite=None, reason=reason)
+                        except Exception:  # noqa: BLE001
+                            pass
+        view.created.locked.clear()
         # Channels/threads/category first (reverse order), then roles.
         for cid in reversed(view.created.channels):
             ch = guild.get_channel(cid) or guild.get_thread(cid)
