@@ -1272,6 +1272,18 @@ class Clanktank(commands.Cog):
     async def is_clanker(self, user_id: int, guild_id: int) -> bool:
         return (user_id, guild_id) in self._clanked
 
+    async def _is_whitelisted_hunter(self, user_id: int, guild_id: int) -> bool:
+        """True if this user is a whitelisted scam hunter for the guild.
+
+        Whitelisted hunters are immune to every automatic clank path so that
+        staff can mention and coordinate with them freely; a manual moderator
+        clank can still override."""
+        try:
+            s = await self.bot.db.get_guild_settings(guild_id)
+        except Exception:
+            return False
+        return int(user_id) in {int(x) for x in (s.get("scam_hunter_ids") or [])}
+
     # -- Public AI context ----------------------------------------------------
 
     async def clanktank_summary_for_ai(self, guild_id: int) -> str:
@@ -2523,10 +2535,17 @@ class Clanktank(commands.Cog):
         if uid not in hunter_ids:
             return
 
-        # Collect targets from explicit @mentions in the body and raw 17-20 digit
-        # user IDs. A reply to someone's message puts that user in message.mentions
-        # even without an explicit ping, so require the mention token to actually
-        # appear in the content -- replying to someone must not clank them.
+        # Targets come ONLY from what the hunter explicitly typed: a literal
+        # @mention token in the body, or a raw 17-20 digit user id. Using the
+        # Discord reply feature must never clank the person being replied to.
+        #
+        # Two things make a reply look like a mention, and both are excluded:
+        #   1. discord.py puts the replied-to author in message.mentions even
+        #      when no ping was typed, so we require the actual <@id> token to
+        #      appear in message.content.
+        #   2. A reply with the ping toggle ON does inject the author into
+        #      mentions; to be certain, the replied-to author id (from
+        #      message.reference) is removed from the target set outright.
         raw = message.content or ""
         targets: set[int] = set()
         for m in (message.mentions or []):
@@ -2536,6 +2555,22 @@ class Clanktank(commands.Cog):
                 targets.add(m.id)
         for match in re.finditer(r"\b(\d{17,20})\b", raw):
             targets.add(int(match.group(1)))
+
+        # Never target the author of a replied-to message just because the
+        # hunter used Discord's reply UI.
+        replied_author_id = 0
+        ref = message.reference
+        if ref is not None:
+            resolved = getattr(ref, "resolved", None)
+            if isinstance(resolved, discord.Message) and resolved.author:
+                replied_author_id = resolved.author.id
+            # If the token wasn't typed in the body, drop the replied-to author.
+            if replied_author_id and not (
+                f"<@{replied_author_id}>" in raw or f"<@!{replied_author_id}>" in raw
+                or str(replied_author_id) in raw
+            ):
+                targets.discard(replied_author_id)
+
         targets.discard(uid)
         targets.discard(self.bot.user.id if self.bot.user else 0)
         # Hunters are immune -- they can report but cannot be auto-clanked by
@@ -3676,6 +3711,7 @@ class Clanktank(commands.Cog):
         *,
         defer_purge: bool = False,
         allow_booster: bool = False,
+        manual: bool = False,
     ) -> tuple[list[discord.Message], list[dict]]:
         guild = member.guild
         uid, gid = member.id, guild.id
@@ -3683,6 +3719,16 @@ class Clanktank(commands.Cog):
         clanker_role = self._clanker_role(guild)
         if clanker_role is None:
             raise ValueError(f'No role named "{_CLANKER_ROLE_NAME}" found.')
+
+        # Whitelisted scam hunters are never auto-clanked: staff need to mention
+        # and talk to them. A manual `.clank add` by a moderator can still
+        # override (manual=True), but every automatic path leaves them alone.
+        if not manual and await self._is_whitelisted_hunter(uid, gid):
+            log.info(
+                "clanktank: skipping auto-clank for whitelisted hunter uid=%s gid=%s",
+                uid, gid,
+            )
+            raise ValueError(f"{member} is a whitelisted scam hunter and is immune to auto-clank.")
 
         # Server boosters are immune to auto-clank; manual ,clanker add may override.
         if not allow_booster and member.premium_since is not None:
@@ -4713,6 +4759,7 @@ class Clanktank(commands.Cog):
                 channel=ctx.channel if isinstance(ctx.channel, discord.TextChannel) else None,
                 defer_purge=True,
                 allow_booster=True,
+                manual=True,
             )
         except ValueError as exc:
             await ctx.reply_error(str(exc))

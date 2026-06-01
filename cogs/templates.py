@@ -7,7 +7,7 @@ import secrets
 import discord
 from discord.ext import commands
 
-from core.framework.cogs import GuildCog
+from clanklib.permissions import ModCog
 from core.framework.components import Container, send_v2
 from core.framework.context import DiscoContext
 from core.framework.ui import C_ERROR, C_GOLD, C_INFO, C_SUCCESS, fmt_ts
@@ -23,7 +23,7 @@ def _slug(name: str) -> str:
     return f"{base}-{secrets.token_hex(2)}"
 
 
-class Templates(GuildCog):
+class Templates(ModCog):
     @commands.group(name="template", aliases=["templates", "tpl"], invoke_without_command=True)
     async def template(self, ctx: DiscoContext) -> None:
         await self.template_browse(ctx)
@@ -46,7 +46,7 @@ class Templates(GuildCog):
         )
         await send_v2(ctx, Container(accent_color=C_SUCCESS)
                       .text("## Template created")
-                      .text(f"**{name}**  -  `{tid}`\n"
+                      .text(f"**{name}** · `{tid}`\n"
                             f"{len(data['roles'])} roles, {len(data['channels'])} channels")
                       .separator()
                       .text(f"-# Anyone can apply it with `{self._p()}template load {tid}`."))
@@ -86,8 +86,8 @@ class Templates(GuildCog):
                 f"Publish one with `{self._p()}template create`."))
             return
         lines = [
-            f"{'⭐ ' if r.get('featured') else ''}`{r['id']}`  -  **{r['name']}**  "
-            f"-  {r.get('uses', 0)} uses"
+            f"{'(featured) ' if r.get('featured') else ''}`{r['id']}` · **{r['name']}**  "
+            f"· {r.get('uses', 0)} uses"
             + (f"\n-# {r['description']}" if r.get("description") else "")
             for r in rows
         ]
@@ -107,9 +107,9 @@ class Templates(GuildCog):
         await send_v2(ctx, Container(accent_color=C_INFO)
                       .text(f"## {row['name']}")
                       .text((row.get("description") or "_No description._") + "\n\n"
-                            f"**ID** `{row['id']}`  -  **Uses** {row.get('uses', 0)}  "
-                            f"-  **Created** {fmt_ts(row['created_at'])}\n"
-                            f"**Roles** {len(data.get('roles', []))}  -  "
+                            f"**ID** `{row['id']}` · **Uses** {row.get('uses', 0)}  "
+                            f"**Created** {fmt_ts(row['created_at'])}\n"
+                            f"**Roles** {len(data.get('roles', []))} · "
                             f"**Channels** {len(data.get('channels', []))}"))
 
     @template.command(name="delete", aliases=["del", "rm"])
