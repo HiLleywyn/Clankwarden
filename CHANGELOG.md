@@ -22,8 +22,11 @@
   key-protected `/api/v2` reads for backups and templates.
 
 ### Documentation
-- Installation guide (local / Docker / Railway / Sojourns), full configuration
-  reference and a complete command reference.
+- Thick, end-to-end deployment guide (`docs/deployment.md`) covering all four
+  pathways - local/bare-metal, Docker, Railway and Sojourns - with
+  prerequisites, post-deploy verification, upgrade/rollback and troubleshooting.
+- Installation quick-start, full configuration reference and a complete command
+  reference.
 
 ### Changes
 - Components V2 is the default UI across every command.
