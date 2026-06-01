@@ -23,7 +23,7 @@ class Sync(GuildCog):
     async def sync(self, ctx: DiscoContext) -> None:
         await self.sync_list(ctx)
 
-    @sync.command(name="messages", aliases=["msg", "messages"])
+    @sync.command(name="messages", aliases=["msg", "msgs"])
     @commands.has_guild_permissions(manage_guild=True)
     @commands.bot_has_guild_permissions(manage_webhooks=True)
     async def sync_messages(
