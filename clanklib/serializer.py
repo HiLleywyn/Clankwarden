@@ -203,7 +203,7 @@ class RestoreOptions:
     restore_roles: bool = True
     restore_channels: bool = True
     restore_settings: bool = True
-    restore_messages: bool = False
+    restore_messages: bool = True
     reason: str = "Clanksimus restore"
 
 

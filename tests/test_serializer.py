@@ -6,13 +6,17 @@ import discord  # noqa: F401  -- ensures the runtime has Components V2 era disco
 from clanklib import serializer
 
 
-def test_restore_options_defaults_are_safe() -> None:
+def test_restore_options_default_to_full_package() -> None:
     opts = serializer.RestoreOptions()
     assert opts.delete_roles is True
     assert opts.delete_channels is True
+    assert opts.restore_roles is True
+    assert opts.restore_channels is True
     assert opts.restore_settings is True
-    # Messages are heavy + webhook-driven, so off unless explicitly requested.
-    assert opts.restore_messages is False
+    # A backup restore is the whole package by default: roles, permissions,
+    # channels, settings, and the archived messages. Callers opt out with a
+    # structure-only flag.
+    assert opts.restore_messages is True
 
 
 def test_restore_stats_summary_mentions_counts() -> None:
