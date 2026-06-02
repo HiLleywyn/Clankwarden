@@ -28,6 +28,11 @@ Channel routing per guild (read from ``guild_settings``):
 * ``modlog_ignored_channels`` -- a global list of channel ids whose activity is
   excluded from the log: any event originating in one of these channels is never
   posted (and never escalates), regardless of category or routing.
+* ``modlog_ignore_bots``      -- when true, any event whose actor or target is a
+  bot is excluded (stops the log being flooded by other bots).
+* ``modlog_ignored_users``    -- a list of user ids excluded as actor or target.
+* ``modlog_ignored_roles``    -- a list of role ids; any actor/target member who
+  has one of these roles is excluded.
 
 All ASCII; no embeds.
 """
@@ -142,13 +147,12 @@ PRODUCING_CATEGORIES: tuple["Category", ...] = tuple(
 )
 
 
-def _ignored_channel_ids(settings: dict) -> set[int]:
-    """Parse the per-guild global ignore list into a set of channel ids.
+def _id_set(raw: Any) -> set[int]:
+    """Coerce a stored list of ids into a set of ints.
 
-    The ``modlog_ignored_channels`` setting lives in the ``features`` JSONB, so
-    after a round-trip its ids may come back as ints or strings; coerce both and
-    silently drop anything non-numeric so a malformed entry can never raise."""
-    raw = settings.get("modlog_ignored_channels") or []
+    The ignore lists live in the ``features`` JSONB, so after a round-trip their
+    ids may come back as ints or strings; coerce both and silently drop anything
+    non-numeric so a malformed entry can never raise."""
     if not isinstance(raw, (list, tuple, set)):
         return set()
     out: set[int] = set()
@@ -158,6 +162,21 @@ def _ignored_channel_ids(settings: dict) -> set[int]:
         except (TypeError, ValueError):
             continue
     return out
+
+
+def _ignored_channel_ids(settings: dict) -> set[int]:
+    """The per-guild set of channel ids excluded from the mod log."""
+    return _id_set(settings.get("modlog_ignored_channels"))
+
+
+def _ignored_user_ids(settings: dict) -> set[int]:
+    """The per-guild set of user ids excluded from the mod log."""
+    return _id_set(settings.get("modlog_ignored_users"))
+
+
+def _ignored_role_ids(settings: dict) -> set[int]:
+    """The per-guild set of role ids whose members are excluded from the mod log."""
+    return _id_set(settings.get("modlog_ignored_roles"))
 
 
 def _short_id() -> str:
@@ -420,10 +439,10 @@ class ModLogger:
     async def _dispatch(self, event: LogEvent) -> None:
         try:
             s = await self._guild_settings(event.guild_id)
-            # A channel on the global ignore list is excluded entirely: the event
-            # is still persisted (for the timeline + hash chain) but is never
-            # posted to the log and never escalates.
-            if event.channel_id is not None and event.channel_id in _ignored_channel_ids(s):
+            # Anything on the global ignore list (channel, bot, user, role) is
+            # excluded entirely: the event is still persisted (for the timeline +
+            # hash chain) but is never posted to the log and never escalates.
+            if await self.is_ignored_event(event, s):
                 return
             incident = bool(s.get("modlog_incident"))
             # Incident mode forces every category through (nothing stays muted)
@@ -526,6 +545,73 @@ class ModLogger:
             return False
         s = await self._guild_settings(guild_id)
         return int(channel_id) in _ignored_channel_ids(s)
+
+    async def _bot_and_roles(self, guild_id: int, who: Any,
+                             wid: Optional[int]) -> tuple[bool, set[int]]:
+        """Best-effort: is ``who`` a bot, and what role ids does it carry?
+
+        ``who`` may already be a Member/User (the listeners pass objects) or just
+        an id (rebuilt events); resolve from the guild when we only have an id.
+        Never raises -- a failed lookup just yields what we know."""
+        is_bot = bool(getattr(who, "bot", False))
+        role_objs = getattr(who, "roles", None)
+        if role_objs is None and wid and self.bot is not None:
+            try:
+                guild = self.bot.get_guild(int(guild_id))
+                member = guild.get_member(int(wid)) if guild else None
+            except Exception:  # noqa: BLE001
+                member = None
+            if member is not None:
+                is_bot = is_bot or bool(getattr(member, "bot", False))
+                role_objs = getattr(member, "roles", None)
+            else:
+                try:
+                    user = self.bot.get_user(int(wid))
+                except Exception:  # noqa: BLE001
+                    user = None
+                if user is not None:
+                    is_bot = is_bot or bool(getattr(user, "bot", False))
+        role_ids: set[int] = set()
+        if role_objs:
+            for r in role_objs:
+                rid = getattr(r, "id", None)
+                try:
+                    if rid is not None:
+                        role_ids.add(int(rid))
+                except (TypeError, ValueError):
+                    continue
+        return is_bot, role_ids
+
+    async def is_ignored_event(self, event: LogEvent, settings: dict) -> bool:
+        """Whether an event is excluded by the guild's ignore lists.
+
+        Covers ignored channels, the ignore-bots toggle, ignored users and
+        ignored roles. Checked at dispatch so every event source is filtered
+        from one place. Never raises -- on any error the event is NOT ignored
+        (fail open, so we under-suppress rather than silently drop audit data)."""
+        try:
+            if event.channel_id is not None and event.channel_id in _ignored_channel_ids(settings):
+                return True
+            ignore_bots = bool(settings.get("modlog_ignore_bots"))
+            users = _ignored_user_ids(settings)
+            roles = _ignored_role_ids(settings)
+            if not (ignore_bots or users or roles):
+                return False
+            for who in (event.actor, event.target):
+                if who is None:
+                    continue
+                wid = _coerce_id(who)
+                if wid is not None and wid in users:
+                    return True
+                if ignore_bots or roles:
+                    is_bot, role_ids = await self._bot_and_roles(event.guild_id, who, wid)
+                    if ignore_bots and is_bot:
+                        return True
+                    if roles and (role_ids & roles):
+                        return True
+        except Exception:  # noqa: BLE001
+            log.debug("modlog ignore check failed", exc_info=True)
+        return False
 
     async def _is_muted(self, guild_id: int, category: Category) -> bool:
         s = await self._guild_settings(guild_id)

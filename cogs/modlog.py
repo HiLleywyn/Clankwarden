@@ -15,10 +15,19 @@ from __future__ import annotations
 import discord
 from discord.ext import commands
 
+from typing import Union
+
 from clanklib.modlog import (
     CATEGORY_NAMES, Category, LogEvent, ModLogger, Severity, _epoch,
-    _ignored_channel_ids, _name_of,
+    _ignored_channel_ids, _ignored_role_ids, _ignored_user_ids, _name_of,
 )
+
+# What `.modlog ignore` accepts as a target: a channel, a member/user, or a
+# role. Channels and roles disambiguate by mention; a bare user mention resolves
+# to a Member when they're in the guild (so we can see their roles) else a User.
+_IgnoreTarget = Union[
+    discord.TextChannel, discord.Thread, discord.Role, discord.Member, discord.User
+]
 from clanklib.permissions import ModCog
 from core.framework.components import Container, send_v2
 from core.framework.context import DiscoContext
@@ -369,16 +378,21 @@ class ModLog(ModCog):
         s = await self.db.get_guild_settings(ctx.guild.id)
         routes = s.get("modlog_routes") or {}
         muted = s.get("modlog_muted") or []
-        ignored = sorted(_ignored_channel_ids(s))
         rows = await self.logger.stats(ctx.guild.id, hours=24)
         stat_line = ", ".join(f"{r['category']}: {r['n']}" for r in rows) or "no events in 24h"
         route_lines = "\n".join(
             f"- `{cat}` -> {_chan(ctx.guild, cid)}" for cat, cid in routes.items()
         ) or "_none (all use the default channel)_"
         incident = "ON" if s.get("modlog_incident") else "OFF"
-        ignored_line = (
-            ", ".join(_chan(ctx.guild, cid) for cid in ignored) if ignored else "none"
-        )
+        ign_bits: list[str] = []
+        if s.get("modlog_ignore_bots"):
+            ign_bits.append("bots")
+        for n, label in ((len(_ignored_channel_ids(s)), "channel"),
+                         (len(_ignored_user_ids(s)), "user"),
+                         (len(_ignored_role_ids(s)), "role")):
+            if n:
+                ign_bits.append(f"{n} {label}{'s' if n != 1 else ''}")
+        ignored_line = ", ".join(ign_bits) if ign_bits else "none"
         panel = (
             Container(accent_color=C_NAVY)
             .text("## Moderation Log")
@@ -386,7 +400,7 @@ class ModLog(ModCog):
                 f"**Default channel**  {_chan(ctx.guild, s.get('mod_log_channel'))}\n"
                 f"**Alert channel**  {_chan(ctx.guild, s.get('modlog_alert_channel'))}\n"
                 f"**Muted categories**  {', '.join(muted) if muted else 'none'}\n"
-                f"**Ignored channels**  {ignored_line}\n"
+                f"**Ignoring**  {ignored_line}\n"
                 f"**Incident mode**  {incident}"
             )
             .separator()
@@ -397,7 +411,7 @@ class ModLog(ModCog):
             .text(
                 f"-# `{ctx.prefix}modlog channel #ch` set default  *  "
                 f"`route <category> #ch`  *  `mute/unmute <category>`  *  "
-                f"`ignore add/remove #ch`  *  "
+                f"`ignore bots/#ch/@user/@role`  *  "
                 f"`timeline [@user]`  *  `case <evt_id>`  *  `stats [hours]`  *  "
                 f"`prune <days>`  *  `verify`  *  `alert channel/role`  *  "
                 f"`incident on/off`  *  `test`\n"
@@ -446,77 +460,130 @@ class ModLog(ModCog):
             f"`{category}` -> {channel.mention if channel else 'default channel'}."))
 
     @modlog_grp.group(name="ignore", aliases=["ignored", "exclude"], invoke_without_command=True)
-    async def modlog_ignore(self, ctx: DiscoContext) -> None:
-        """Show the global ignore list of channels excluded from logging."""
+    async def modlog_ignore(self, ctx: DiscoContext, *targets: _IgnoreTarget) -> None:
+        """Show the ignore list, or ignore the given channels/users/roles.
+
+        `.modlog ignore` shows everything excluded. Pass mentions to add them:
+        `.modlog ignore #spam @user @role`. `.modlog ignore bots` toggles
+        ignoring every bot; `remove`/`clear` undo."""
+        if targets:
+            await self._ignore_apply(ctx, targets, add=True)
+            return
+        await self._ignore_show(ctx)
+
+    @modlog_ignore.command(name="bots", aliases=["bot"])
+    async def modlog_ignore_bots(self, ctx: DiscoContext, state: str = "") -> None:
+        """Toggle ignoring every bot's events (`bots`, `bots on`, `bots off`)."""
         s = await self.db.get_guild_settings(ctx.guild.id)
-        ids = sorted(_ignored_channel_ids(s))
-        body = (
-            "\n".join(f"- {_chan(ctx.guild, cid)}" for cid in ids)
-            if ids else "_No channels are ignored. Activity everywhere is logged._"
-        )
-        await send_v2(ctx, Container(accent_color=C_INFO)
-                      .text("## Mod-log ignore list")
-                      .separator()
-                      .text(body)
-                      .separator()
-                      .text(
-            f"-# Events originating in these channels are never posted to the mod "
-            f"log -- message edits/deletes there are not even recorded.\n"
-            f"-# `{ctx.prefix}modlog ignore add #ch ...`  *  `remove #ch ...`  *  `clear`"))
+        cur = bool(s.get("modlog_ignore_bots"))
+        state = state.lower().strip()
+        if state in ("on", "yes", "true", "1", "enable", "enabled"):
+            new = True
+        elif state in ("off", "no", "false", "0", "disable", "disabled"):
+            new = False
+        else:
+            new = not cur  # a bare `.modlog ignore bots` flips it
+        await self.db.update_guild_setting(ctx.guild.id, "modlog_ignore_bots", new)
+        await self.logger.config(
+            "config.modlog_ignore", ctx.guild.id, actor=ctx.author,
+            summary=f"Mod-log ignore-bots turned {'ON' if new else 'OFF'}.")
+        await send_v2(ctx, Container(accent_color=C_SUCCESS).text(
+            f"Bots are **{'now ignored' if new else 'no longer ignored'}** in the mod log."
+            + ("" if new else " Their events are logged again.")))
 
     @modlog_ignore.command(name="add", aliases=["+"])
-    async def modlog_ignore_add(self, ctx: DiscoContext, *channels: discord.TextChannel) -> None:
-        """Add one or more channels to the global ignore list."""
-        await self._ignore_mutate(ctx, channels, add=True)
+    async def modlog_ignore_add(self, ctx: DiscoContext, *targets: _IgnoreTarget) -> None:
+        """Ignore one or more channels, users, or roles."""
+        await self._ignore_apply(ctx, targets, add=True)
 
     @modlog_ignore.command(name="remove", aliases=["rm", "-", "delete", "del"])
-    async def modlog_ignore_remove(self, ctx: DiscoContext, *channels: discord.TextChannel) -> None:
-        """Remove one or more channels from the global ignore list."""
-        await self._ignore_mutate(ctx, channels, add=False)
+    async def modlog_ignore_remove(self, ctx: DiscoContext, *targets: _IgnoreTarget) -> None:
+        """Stop ignoring one or more channels, users, or roles."""
+        await self._ignore_apply(ctx, targets, add=False)
 
     @modlog_ignore.command(name="clear", aliases=["reset"])
     async def modlog_ignore_clear(self, ctx: DiscoContext) -> None:
-        """Clear the global ignore list (resume logging everywhere)."""
+        """Clear every ignore (channels, users, roles) and stop ignoring bots."""
         s = await self.db.get_guild_settings(ctx.guild.id)
-        if not _ignored_channel_ids(s):
+        if not (s.get("modlog_ignore_bots") or _ignored_channel_ids(s)
+                or _ignored_user_ids(s) or _ignored_role_ids(s)):
             await send_v2(ctx, Container(accent_color=C_INFO).text(
-                "The ignore list is already empty."))
+                "Nothing is being ignored."))
             return
-        await self.db.update_guild_setting(ctx.guild.id, "modlog_ignored_channels", [])
+        for key in ("modlog_ignored_channels", "modlog_ignored_users", "modlog_ignored_roles"):
+            await self.db.update_guild_setting(ctx.guild.id, key, [])
+        await self.db.update_guild_setting(ctx.guild.id, "modlog_ignore_bots", False)
         await self.logger.config(
             "config.modlog_ignore", ctx.guild.id, actor=ctx.author,
             summary="Cleared the mod-log ignore list.")
         await send_v2(ctx, Container(accent_color=C_SUCCESS).text(
-            "Ignore list cleared -- activity in every channel is logged again."))
+            "Ignore list cleared -- the mod log records everything again."))
 
-    async def _ignore_mutate(self, ctx: DiscoContext,
-                             channels: tuple[discord.TextChannel, ...], add: bool) -> None:
-        if not channels:
+    # -- ignore helpers -------------------------------------------------------
+
+    async def _ignore_show(self, ctx: DiscoContext) -> None:
+        s = await self.db.get_guild_settings(ctx.guild.id)
+        chans = sorted(_ignored_channel_ids(s))
+        users = sorted(_ignored_user_ids(s))
+        roles = sorted(_ignored_role_ids(s))
+        await send_v2(ctx, Container(accent_color=C_INFO)
+                      .text("## Mod-log ignore list")
+                      .text(
+            f"**Bots**  {'ON' if s.get('modlog_ignore_bots') else 'OFF'}\n"
+            f"**Channels**  {', '.join(_chan(ctx.guild, c) for c in chans) if chans else 'none'}\n"
+            f"**Users**  {', '.join(f'<@{u}>' for u in users) if users else 'none'}\n"
+            f"**Roles**  {', '.join(f'<@&{r}>' for r in roles) if roles else 'none'}")
+                      .separator()
+                      .text(
+            f"-# Ignored events are still recorded for the timeline but never "
+            f"posted to the log (and never escalate).\n"
+            f"-# `{ctx.prefix}modlog ignore bots`  *  `ignore #ch @user @role`  *  "
+            f"`ignore remove ...`  *  `ignore clear`"))
+
+    async def _ignore_apply(self, ctx: DiscoContext, targets: tuple, add: bool) -> None:
+        if not targets:
             verb = "add" if add else "remove"
             await send_v2(ctx, Container(accent_color=C_ERROR).text(
-                f"Give one or more channels, e.g. `{ctx.prefix}modlog ignore {verb} #channel`."))
+                f"Mention one or more channels, users, or roles, e.g. "
+                f"`{ctx.prefix}modlog ignore {verb} #channel @user @role`. "
+                f"(To ignore every bot: `{ctx.prefix}modlog ignore bots`.)"))
             return
         s = await self.db.get_guild_settings(ctx.guild.id)
-        ids = _ignored_channel_ids(s)
-        before = set(ids)
-        for ch in channels:
-            if add:
-                ids.add(ch.id)
+        sets = {
+            "modlog_ignored_channels": _ignored_channel_ids(s),
+            "modlog_ignored_users": _ignored_user_ids(s),
+            "modlog_ignored_roles": _ignored_role_ids(s),
+        }
+        before = {k: set(v) for k, v in sets.items()}
+        labels: list[str] = []
+        for t in targets:
+            if isinstance(t, discord.Role):
+                key = "modlog_ignored_roles"
+            elif isinstance(t, (discord.Member, discord.User)):
+                key = "modlog_ignored_users"
             else:
-                ids.discard(ch.id)
-        if ids == before:
+                key = "modlog_ignored_channels"
+            if add:
+                sets[key].add(t.id)
+            else:
+                sets[key].discard(t.id)
+            labels.append(t.mention)
+        changed = {k: v for k, v in sets.items() if v != before[k]}
+        if not changed:
             await send_v2(ctx, Container(accent_color=C_INFO).text(
-                "No change -- those channels were already "
-                + ("on the ignore list." if add else "not on the ignore list.")))
+                "No change -- those were already "
+                + ("ignored." if add else "not on the ignore list.")))
             return
-        await self.db.update_guild_setting(ctx.guild.id, "modlog_ignored_channels", sorted(ids))
-        names = ", ".join(c.mention for c in channels)
+        for key, ids in changed.items():
+            await self.db.update_guild_setting(ctx.guild.id, key, sorted(ids))
+        names = ", ".join(labels)
         await self.logger.config(
             "config.modlog_ignore", ctx.guild.id, actor=ctx.author,
             summary=f"{'Added to' if add else 'Removed from'} the mod-log ignore list: {names}.")
+        total = sum(len(v) for v in sets.values())
         verb = "now ignored" if add else "no longer ignored"
         await send_v2(ctx, Container(accent_color=C_SUCCESS).text(
-            f"{names} {verb}. {len(ids)} channel(s) on the ignore list."))
+            f"{names} {verb}. {total} channel/user/role(s) on the ignore list."))
 
     @modlog_grp.command(name="mute")
     async def modlog_mute(self, ctx: DiscoContext, category: str) -> None:
