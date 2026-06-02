@@ -49,6 +49,8 @@ GUILD_FIELDS: tuple[GuildField, ...] = (
     GuildField("dehoist_log_channel", "discord_channel", "Dehoist log channel", "Where dehoist alerts post. Falls back to the Clanker log channel."),
     GuildField("dehoist_triggers", "string", "Dehoist triggers", "Comma list of events that run the check: join, message, update.", max_len=40),
     GuildField("dehoist_topics", "string", "Dehoist extra topics", "Optional comma list of extra topic keywords to seed the impersonation lexicon.", max_len=200),
+    GuildField("autodelete_replies", "number", "Auto-delete command replies (seconds)", "Self-delete command/mod-command reply panels after N seconds. 0 = keep them.", min=0, max=3600),
+    GuildField("autodelete_info", "number", "Auto-delete info panels (seconds)", "Self-delete informational panels (.help/.about/.settings) after N seconds. 0 = keep them. Escape-room messages are never deleted.", min=0, max=86400),
 )
 
 FIELDS_BY_KEY: dict[str, GuildField] = {f.key: f for f in GUILD_FIELDS}

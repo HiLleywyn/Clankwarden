@@ -277,7 +277,15 @@ class SetupWizard(ModCog):
                 "clanktank", category=category, reason=reason,
                 overwrites={
                     clanker_role: discord.PermissionOverwrite(
-                        view_channel=True, send_messages=True, read_message_history=True),
+                        view_channel=True, send_messages=True, read_message_history=True,
+                        # Containment hardening: clankers may talk in the tank but
+                        # cannot spam threads (the escape room), post images/embeds,
+                        # open threads, run polls, or react.
+                        send_messages_in_threads=False,
+                        create_public_threads=False, create_private_threads=False,
+                        add_reactions=False, attach_files=False, embed_links=False,
+                        send_polls=False, use_external_emojis=False,
+                        use_external_stickers=False),
                     **({me: staff_view} if me else {}),
                 })
             view.created.channels.append(tank.id)
@@ -302,6 +310,33 @@ class SetupWizard(ModCog):
                 await self._set(view, "clank_escape_thread", thread.id)
             except Exception:  # noqa: BLE001
                 view.summary_lines.append("Could not create the escape thread (set it later with .set escapethread)")
+
+            # Clanker-hunter role + report channel, both under the Clanktank
+            # category. Members with the role can report scammers in the channel.
+            hunter_role = discord.utils.get(guild.roles, name="Clanker Hunter")
+            if hunter_role is None:
+                hunter_role = await guild.create_role(
+                    name="Clanker Hunter", permissions=discord.Permissions.none(),
+                    colour=discord.Colour(0xe67e22), hoist=False, mentionable=True,
+                    reason=reason)
+                view.created.roles.append(hunter_role.id)
+                view.summary_lines.append(f"Created role {hunter_role.mention} (scam reporters)")
+            else:
+                view.summary_lines.append(f"Reused role {hunter_role.mention} (scam reporters)")
+            await self._set(view, "scam_hunter_role", hunter_role.id)
+
+            hunter_ch = await guild.create_text_channel(
+                "clanker-hunters", category=category, reason=reason,
+                overwrites={
+                    guild.default_role: hide,
+                    clanker_role: hide,
+                    hunter_role: discord.PermissionOverwrite(
+                        view_channel=True, send_messages=True, read_message_history=True),
+                    **({me: staff_view} if me else {}),
+                })
+            view.created.channels.append(hunter_ch.id)
+            view.summary_lines.append(f"Created {hunter_ch.mention} (scam reports)")
+            await self._set(view, "scam_report_channel", hunter_ch.id)
 
             # Make the Clanker role an actual jail role: deny it View Channel on
             # every existing channel so a clanked user (stripped to @everyone +

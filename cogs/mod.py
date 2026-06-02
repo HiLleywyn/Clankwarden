@@ -103,10 +103,20 @@ class Moderation(GuildCog):
             return False
 
     async def _err(self, ctx: DiscoContext, msg: str) -> None:
-        await send_v2(ctx, Container(accent_color=C_ERROR).text(msg))
+        await self._reply(ctx, Container(accent_color=C_ERROR).text(msg))
 
     async def _ok(self, ctx: DiscoContext, msg: str) -> None:
-        await send_v2(ctx, Container(accent_color=C_SUCCESS).text(msg))
+        await self._reply(ctx, Container(accent_color=C_SUCCESS).text(msg))
+
+    async def _reply(self, ctx: DiscoContext, panel: Container) -> None:
+        """Send a command reply and auto-delete it per the guild's reply TTL."""
+        from clanklib.autodelete import reply_ttl, expire
+        m = await send_v2(ctx, panel)
+        try:
+            s = await self.bot.db.get_guild_settings(ctx.guild.id)
+            await expire(m, reply_ttl(s))
+        except Exception:
+            pass
 
     # -- ban / unban / softban ------------------------------------------------
 
@@ -264,6 +274,7 @@ class Moderation(GuildCog):
     @commands.has_guild_permissions(kick_members=True)
     @commands.bot_has_guild_permissions(kick_members=True)
     async def kick(self, ctx: DiscoContext, member: discord.Member, *, reason: str = "No reason given") -> None:
+        """Kick a member from the server."""
         ok, why = self._hierarchy_ok(ctx, member)
         if not ok:
             await self._err(ctx, why)
@@ -311,6 +322,7 @@ class Moderation(GuildCog):
     @commands.has_guild_permissions(moderate_members=True)
     @commands.bot_has_guild_permissions(moderate_members=True)
     async def untimeout(self, ctx: DiscoContext, member: discord.Member, *, reason: str = "No reason given") -> None:
+        """Remove a member's active timeout."""
         if member.timed_out_until is None:
             await self._err(ctx, "That member isn't timed out.")
             return
@@ -328,6 +340,7 @@ class Moderation(GuildCog):
     @commands.command(name="warn")
     @commands.has_guild_permissions(moderate_members=True)
     async def warn(self, ctx: DiscoContext, member: discord.Member, *, reason: str = "No reason given") -> None:
+        """Warn a member and record it."""
         ok, why = self._hierarchy_ok(ctx, member)
         if not ok:
             await self._err(ctx, why)
@@ -356,6 +369,7 @@ class Moderation(GuildCog):
     @commands.command(name="warnings", aliases=["warns"])
     @commands.has_guild_permissions(moderate_members=True)
     async def warnings(self, ctx: DiscoContext, member: discord.Member) -> None:
+        """List a member's warnings."""
         if self.db is None:
             await self._err(ctx, "Warnings storage is unavailable.")
             return
@@ -385,6 +399,7 @@ class Moderation(GuildCog):
     @commands.command(name="delwarn", aliases=["unwarn"])
     @commands.has_guild_permissions(moderate_members=True)
     async def delwarn(self, ctx: DiscoContext, warning_id: int) -> None:
+        """Delete a warning by its id."""
         if self.db is None:
             await self._err(ctx, "Warnings storage is unavailable.")
             return

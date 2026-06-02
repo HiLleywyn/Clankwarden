@@ -22,8 +22,10 @@ _START = time.time()
 
 
 class Meta(BaseCog):
-    @commands.command(name="help", aliases=["commands", "h"])
+    @commands.hybrid_command(name="help", aliases=["commands", "h"],
+                             description="Show the Clankwarden command help hub.")
     async def help_cmd(self, ctx: DiscoContext, *, topic: str = "") -> None:
+        """Open the command help hub."""
         # The dynamic help hub: one surface, a section multi-select, command
         # lists generated live from the command tree.
         from cogs._help_view import send_help
@@ -31,6 +33,7 @@ class Meta(BaseCog):
 
     @commands.command(name="about", aliases=["info"])
     async def about_cmd(self, ctx: DiscoContext) -> None:
+        """Show what Clankwarden is, with a link to add it."""
         guilds = len(self.bot.guilds)
         users = sum(g.member_count or 0 for g in self.bot.guilds)
         panel = (
@@ -45,10 +48,11 @@ class Meta(BaseCog):
                      accessory=Container.accessory_button(
                          "Add to a server", url=self._invite_url()))
         )
-        await send_v2(ctx, panel)
+        await self._info(ctx, panel)
 
     @commands.command(name="ping", aliases=["latency"])
     async def ping_cmd(self, ctx: DiscoContext) -> None:
+        """Show gateway latency and uptime."""
         latency = round(self.bot.latency * 1000)
         uptime = int(time.time() - _START)
         h, rem = divmod(uptime, 3600)
@@ -58,10 +62,11 @@ class Meta(BaseCog):
             .text("## Pong")
             .text(f"**Gateway** {latency} ms\n**Uptime** {h}h {m}m {s}s")
         )
-        await send_v2(ctx, panel)
+        await self._info(ctx, panel)
 
     @commands.command(name="invite")
     async def invite_cmd(self, ctx: DiscoContext) -> None:
+        """Get the bot's invite link (least-privilege, never Administrator)."""
         panel = (
             Container(accent_color=C_INFO)
             .text("## Invite Clankwarden")
@@ -69,7 +74,7 @@ class Meta(BaseCog):
                      "uses, not Administrator.",
                      accessory=Container.accessory_button("Invite", url=self._invite_url()))
         )
-        await send_v2(ctx, panel)
+        await self._info(ctx, panel)
 
     @commands.command(name="setup", aliases=["permissions", "perms", "diagnose"])
     @commands.has_guild_permissions(manage_guild=True)
@@ -112,11 +117,22 @@ class Meta(BaseCog):
             panel.add_row(Container.make_button(
                 "Re-invite with the right permissions", url=self._invite_url()))
 
-        await send_v2(ctx, panel)
+        await self._info(ctx, panel)
 
     def _invite_url(self) -> str:
         cid = getattr(self.bot.user, "id", None) or setting(self.bot, "DISCORD_CLIENT_ID", "")
         return invite_url(cid)
+
+    async def _info(self, ctx: DiscoContext, panel) -> None:
+        """Send an informational panel; auto-delete it per the guild's info TTL
+        (slower than command replies; escape-room messages are never touched)."""
+        from clanklib.autodelete import info_ttl, expire
+        m = await send_v2(ctx, panel)
+        try:
+            s = await self.bot.db.get_guild_settings(ctx.guild.id)
+            await expire(m, info_ttl(s))
+        except Exception:
+            pass
 
 
 async def setup(bot: commands.Bot) -> None:

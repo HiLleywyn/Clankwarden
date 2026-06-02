@@ -1,89 +1,130 @@
 # Command reference
 
-Default prefix is `.` (configurable). Most management commands require a
-server permission; the bot also needs the matching permission itself.
+Default prefix is `.` (configurable with `.set prefix`). Most management commands
+require a server permission, and the bot needs the matching permission itself
+(run `.setup` to audit). A handful of act-fast commands are also available as
+slash commands.
 
-## Backups (`.backup`, `.bk`)
-
-| Command | Permission | What it does |
-|---|---|---|
-| `.backup create [chatlog[:N]]` | Administrator | Snapshot the server. Add `chatlog` or `chatlog:100` to also archive recent messages. |
-| `.backup load <id> [messages]` | Administrator | **Destructive.** Rebuild the server from a backup; add `messages` to also replay archived messages. |
-| `.backup list` | -- | Your backups. |
-| `.backup info <id>` | -- | Details for one backup. |
-| `.backup delete <id>` | -- | Delete one of your backups. |
-| `.backup interval <hours> [keep]` | Administrator | Automatic backups every N hours, keeping the newest `keep` (default 7). `.backup interval off` stops. |
-
-## Templates (`.template`, `.tpl`)
-
-| Command | Permission | What it does |
-|---|---|---|
-| `.template create <name> \| <description>` | Administrator | Publish a structure-only template from this server. |
-| `.template load <id>` | Administrator | **Destructive.** Apply a template to this server. |
-| `.template browse [query]` | -- | Browse / search community templates. |
-| `.template info <id>` | -- | Details for one template. |
-| `.template delete <id>` | -- | Delete one of your templates. |
-
-## Chatlog (`.chatlog`, `.cl`)
-
-| Command | Permission | What it does |
-|---|---|---|
-| `.chatlog create [#channel] [limit]` | Manage Messages | Archive the last `limit` messages (default: here, 100). |
-| `.chatlog load <id> [#channel]` | Manage Webhooks | Replay an archive into a channel via webhook. |
-| `.chatlog list` | -- | Your chatlogs. |
-| `.chatlog delete <id>` | -- | Delete one of your chatlogs. |
-
-## Sync (`.sync`)
-
-| Command | Permission | What it does |
-|---|---|---|
-| `.sync messages <#source> <#target>` | Manage Server | Mirror new messages from source to target via webhook. |
-| `.sync bans <source_guild_id> <target_guild_id>` | Bot owner | Propagate bans/unbans between guilds the bot is in. |
-| `.sync list` | -- | Sync links in this server. |
-| `.sync remove <id>` | Manage Server | Remove a sync link. |
-
-## Import / Export
-
-| Command | Permission | What it does |
-|---|---|---|
-| `.export <backup_id>` | -- | Download a backup as a JSON file. |
-| `.import` | Administrator | Import a backup from an attached JSON file. |
-
-## Settings (`.settings`, `.set`)
-
-| Command | Permission | What it does |
-|---|---|---|
-| `.settings` | Manage Server | Show this server's configuration. |
-| `.set prefix <p>` | Manage Server | Set a per-guild prefix. |
-| `.set log <#channel>` | Manage Server | Set the log channel (`none` to clear). |
-| `.set containment <#channel>` | Manage Server | Set the containment channel. |
-| `.set containmentlog <#channel>` | Manage Server | Set the containment log channel. |
-
-## Containment (`.clank`, alias `.clanker`)
-
-The full ported containment subset. Highlights:
+## General
 
 | Command | What it does |
 |---|---|
-| `.clank add <@user> [reason]` | Contain an account. |
-| `.clank remove <@user>` | Release an account. |
-| `.clank list` | Active contained accounts. |
-| `.clank info <@user>` | Record, score and evidence for an account. |
-| `.clank scan` | Score active accounts / a guarded role band. |
-| `.clank chart` | Containment analytics chart. |
-| `.clank help` | Full containment help. |
+| `.help` (`/help`, `.commands`, `.h`) | Open the command help hub. |
+| `.about` (`.info`) | What Clankwarden is, with an invite link. |
+| `.ping` (`.latency`) | Gateway latency and uptime. |
+| `.invite` | The bot's least-privilege invite link. |
+| `.setup` (`.permissions`, `.perms`, `.diagnose`) | Audit the bot's permissions in this server and show what to fix. |
+| `.init` (`.setupwizard`) | Guided one-command setup (roles, tank, hunter channel, mod-log). |
+
+## Moderation
+
+Each needs the matching permission (e.g. Ban Members for `.ban`).
+
+| Command | What it does |
+|---|---|
+| `.ban <user> [reason]` (`/ban`) | Ban a member or a user id. |
+| `.unban <user_id> [reason]` | Lift a ban. |
+| `.softban <member> [reason]` | Ban + immediately unban to clear recent messages. |
+| `.massban <ids...>` (`.banmany`, `.mban`) | Ban many ids, paced to avoid rate limits. |
+| `.kick <member> [reason]` (`/kick`) | Kick a member. |
+| `.timeout <member> <duration> [reason]` (`/timeout`, `.mute`) | Timeout for e.g. `10m`, `1h`, `2d` (max 28d). |
+| `.untimeout <member> [reason]` (`/untimeout`, `.unmute`) | Remove a timeout. |
+| `.warn <member> [reason]` | Warn a member and record it. |
+| `.warnings <member>` (`.warns`) | List a member's warnings. |
+| `.delwarn <id>` (`.unwarn`) | Delete a warning. |
+| `.purge <amount> [member]` (`.clear`, `.prune`) | Bulk-delete messages. |
+| `.slowmode <duration>` (`.slow`) | Set channel slowmode (`0` to disable). |
+| `.lock` / `.unlock` | Lock or unlock the current channel. |
+
+## Containment (`.clank`, `.clanker`)
+
+The scammer/bot-account containment system. `.clank` actions need Manage Roles;
+`/clank` and `/unclank` are limited to the mod team and the clanker-hunter role.
+
+| Command | What it does |
+|---|---|
+| `.clank @user [reason] [duration]` (`/clank`) | Clank a user: strip their roles, confine them to the tank. Optional duration like `30m`, `2h`, `7d`. |
+| `.unclank @user` (`.release`, `.free`, `/unclank`, `.clank unclank`) | Release a user and restore their roles. |
+| `.clank list` | Active clankers. |
+| `.clank info @user` | A clanker's full record. |
+| `.clank case <n>` | Look up a case by number. |
+| `.clank evidence @user` | Stored message evidence. |
+| `.clank logs [@user]` | Recent containment audit events. |
+| `.clank scan <roleA> <roleB>` | Scan members in a role band for scam signals. |
+| `.clank sync` | Reconcile the in-memory cache with the database. |
+| `.clank tree @user` / `.clank links @user` | Account-linkage tree / connections. |
+| `.clank stats` (`.clank chart`) | Containment analytics chart. |
+| `.clank clusters` / `.clank cluster <id> ...` | Linked-account clusters (label / add / remove / cleave). |
+| `.clank hunter channel\|role\|list` | Configure the scammer-report (hunter) channel and role. |
+| `.clank guard ...` (`.clank clamp`) | Ambient tank guards: `clean` (urls/addresses/scams), `automod` (auto mute/delete), `sweep`, `isolate`, `quiet`, `check`. |
+| `.clank taunt` | Post an anonymous, reformulated message into the tank. |
+| `.clank escape` | (Clankers) get your escape-room link. |
+| `.clank er status\|reload\|reset\|purge\|info\|setthread\|clear` | Escape-room administration. |
+
+## Smart Dehoist (`.dehoist`, `.dh`)
+
+Learns this server's impersonation signals and acts on members **below a
+configurable floor role** (staff/trusted are never touched).
+
+| Command | What it does |
+|---|---|
+| `.dehoist` | Open the config panel (enable, mode, floor role, log channel). |
+| `.dehoist on` / `.dehoist off` | Enable / disable. |
+| `.dehoist mode <off\|warn\|rename\|rename_clank>` | What auto-mode does on a match. |
+| `.dehoist floor <role>` | Only members at/below this role are eligible. |
+| `.dehoist channel [#ch]` (`.dehoist log`) | Where dehoist alerts post. |
+| `.dehoist signals` (`.dehoist intel`) | Show the impersonation lexicon learned from this server. |
+| `.dehoist test <name>` | Test a literal name against the signals (no action). |
+| `.dehoist scan [limit]` | Preview current matching members (read-only). |
+| `.dehoist sweep` | Act on all current matches, paced to avoid rate limits. |
+| `.dehoist whitelist <member>` (`.dehoist wl`) | Exempt a member. |
+| `.dehoist recent` (`.dehoist events`) | Recent dehoist actions. |
+| `/report <user> [reason]` | **Anyone** can report a suspected scammer; mods get an actionable alert (Clank / False-report). |
+| `/dehoist <user>` | Mods: dehoist one member immediately. |
+
+## Mod log (`.modlog`, `.mlog`)
+
+Categorized, tamper-evident (hash-chained) audit logging.
+
+| Command | What it does |
+|---|---|
+| `.modlog` | Show the mod-log configuration. |
+| `.modlog channel [#ch]` | Set the default mod-log channel. |
+| `.modlog route <category> <#ch>` | Route one category to a channel. |
+| `.modlog mute\|unmute <category>` | Stop / resume logging a category. |
+| `.modlog timeline [member]` (`.history`) | Recent logged events. |
+| `.modlog case <id>` (`.lookup`, `.view`, `.ref`) | Look up one event. |
+| `.modlog stats [hours]` | Event counts by category. |
+| `.modlog prune <days>` | Delete events older than N days. |
+| `.modlog verify` (`.audit`, `.integrity`) | Verify the hash chain. |
+| `.modlog alert channel\|role` | Configure high-severity escalation. |
+| `.modlog incident` / `.modlog test` | Toggle incident mode / emit a test event. |
+
+## Settings (`.settings`, `.set`)
+
+`.settings` (`.config`, `.cfg`) shows every per-server setting. Edit with
+`.set <option> <value>` (use `none` to clear). Everything is also editable in the
+Auren web UI.
+
+| Option | Sets |
+|---|---|
+| `prefix` | Command prefix (max 5 chars). |
+| `log` / `modlog` | General log / mod-log channel. |
+| `clankerrole` (`role`) | The Clanker containment role. |
+| `category` | The Clanktank category. |
+| `tank` (`containment`, `clanktank`) | The tank channel. |
+| `clankerlog` (`tanklog`) | Containment log channel. |
+| `escapethread` (`escape`, `thread`) | Escape-room thread. |
+| `reflection` (`wait`) | Escape-room reflection wait (1-120 min). |
+| `hunterrole` / `hunterchannel` | Clanker-hunter role / report channel. |
+| `autodelete` (`ad`) | Auto-delete command/mod replies after N seconds (0 = keep). |
+| `autodeleteinfo` (`adinfo`) | Auto-delete info panels after N seconds (0 = keep). |
+
+Dehoist options live under `.dehoist`. Escape-room messages are never
+auto-deleted.
 
 ## REST API
 
-With `CLANK_API_KEY` set, send it as the `X-API-Key` header.
-
-| Endpoint | Auth | Returns |
-|---|---|---|
-| `GET /health` | public | Bot status, guild count, readiness. |
-| `GET /api/v2/backups?owner_id=<id>` | key | A user's backups. |
-| `GET /api/v2/backups/{id}` | key | One backup (with its data). |
-| `GET /api/v2/templates?q=<query>` | key | Browse templates. |
-| `GET /api/v2/templates/{id}` | key | One template. |
-| `GET /api/v2/guilds/settings/schema` | key | The editable per-guild settings schema. |
-| `GET /api/v2/guilds/{guild_id}/settings` | key | A server's editable settings. |
-| `PATCH /api/v2/guilds/{guild_id}/settings` | key | Update a server's settings (validated, partial). |
+With `CLANK_API_KEY` set, the per-guild settings routes under `/api/v2/guilds/*`
+accept an `X-API-Key` header; `/health` is public. See
+[`docs/deployment.md`](deployment.md).

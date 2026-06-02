@@ -73,6 +73,14 @@
         ]
       },
       {
+        "id": "autodelete",
+        "label": "Auto-delete",
+        "fields": [
+          { "key": "AUTODELETE_REPLIES", "type": "number", "label": "Command replies (seconds)", "default": 0, "min": 0, "max": 3600, "help": "Self-delete command/mod-command reply panels after N seconds. 0 = keep." },
+          { "key": "AUTODELETE_INFO", "type": "number", "label": "Info panels (seconds)", "default": 0, "min": 0, "max": 86400, "help": "Self-delete informational panels (.help/.about/.settings) after N seconds. 0 = keep. Escape-room messages are never deleted." }
+        ]
+      },
+      {
         "id": "dehoist",
         "label": "Smart Dehoist",
         "fields": [

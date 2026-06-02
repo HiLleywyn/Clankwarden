@@ -24,6 +24,9 @@ class Section:
 # The feature map. ``commands`` are top-level command/group names; subcommands
 # are discovered live from each group. Keep keys stable (used as select values).
 SECTIONS: tuple[Section, ...] = (
+    Section("general", "General", "\U00002139️",
+            "Help, about, ping, the invite link and the permission check.",
+            ("help", "about", "ping", "invite", "setup")),
     Section("moderation", "Moderation", "\U0001F528",
             "Ban, kick, timeout, warn, purge, lock and more.",
             ("ban", "unban", "softban", "massban", "kick", "timeout", "untimeout",
@@ -38,8 +41,8 @@ SECTIONS: tuple[Section, ...] = (
             "One-command guided server setup.",
             ("init",)),
     Section("containment", "Containment", "\U0001F6E1️",
-            "The .clank account-containment system.",
-            ("clank",)),
+            "The .clank account-containment system: clank, unclank and the tank.",
+            ("clank", "unclank")),
     Section("dehoist", "Smart Dehoist", "\U0001F9F9",
             "Server-aware impersonation/hoist detection and auto-containment.",
             ("dehoist",)),
@@ -73,6 +76,11 @@ def command_lines(bot: Any, section: Section, prefix: str) -> list[str]:
             continue
         subs = _walk_subcommands(cmd)
         if subs:
+            # If the group itself does something when invoked without a
+            # subcommand (e.g. `.clank @user`), show that line first.
+            gdoc = (cmd.short_doc or "").strip()
+            if gdoc:
+                lines.append(f"`{prefix}{cmd.name}` -- {gdoc}")
             for sub in subs:
                 if getattr(sub, "hidden", False):
                     continue
