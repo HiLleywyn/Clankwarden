@@ -65,13 +65,38 @@ class Settings(ModCog):
             )
             .separator()
             .text(
+                "### Smart Dehoist\n"
+                f"**Enabled**  {'yes' if s.get('dehoist_enabled') else 'no'}\n"
+                f"**Mode**  `{s.get('dehoist_mode') or 'rename_clank'}`\n"
+                f"**Floor role**  {_role(g, s.get('dehoist_floor_role'))}\n"
+                f"**Log channel**  {_chan(g, s.get('dehoist_log_channel'))}\n"
+                f"**Triggers**  `{s.get('dehoist_triggers') or 'join,message,update'}`\n"
+                f"-# Configure with `{p}dehoist`."
+            )
+            .separator()
+            .text(
+                "### Auto-delete\n"
+                f"**Command replies**  `{int(s.get('autodelete_replies') or 0)}s`"
+                " (0 = keep)\n"
+                f"**Info panels**  `{int(s.get('autodelete_info') or 0)}s` (0 = keep)\n"
+                "-# Escape-room messages are never auto-deleted."
+            )
+            .separator()
+            .text(
                 f"-# Edit with `{p}set <option> <value>` -- options: `prefix`, `log`, "
                 f"`modlog`, `clankerrole`, `category`, `tank`, `clankerlog`, "
-                f"`escapethread`, `reflection`, `hunterrole`, `hunterchannel`. "
-                f"Use `none` to clear. Everything here is also editable in the web UI."
+                f"`escapethread`, `reflection`, `hunterrole`, `hunterchannel`, "
+                f"`autodelete`, `autodeleteinfo`. Dehoist options live under "
+                f"`{p}dehoist`. Use `none` to clear. Everything here is also "
+                f"editable in the web UI."
             )
         )
-        await send_v2(ctx, panel)
+        from clanklib.autodelete import info_ttl, expire
+        m = await send_v2(ctx, panel)
+        try:
+            await expire(m, info_ttl(s))
+        except Exception:
+            pass
 
     @commands.group(name="set", invoke_without_command=True)
     @commands.has_guild_permissions(manage_guild=True)
@@ -155,6 +180,38 @@ class Settings(ModCog):
         await self._logcfg(ctx, "Reflection period", f"{n} min")
         await send_v2(ctx, Container(accent_color=C_SUCCESS).text(
             f"Reflection period set to {n} minute(s)."))
+
+    @set_grp.command(name="autodelete", aliases=["autodel", "ad"])
+    async def set_autodelete(self, ctx: DiscoContext, seconds: str) -> None:
+        await self._set_seconds(ctx, "autodelete_replies", seconds,
+                                "Command-reply auto-delete", 3600)
+
+    @set_grp.command(name="autodeleteinfo", aliases=["autodelinfo", "adinfo"])
+    async def set_autodeleteinfo(self, ctx: DiscoContext, seconds: str) -> None:
+        await self._set_seconds(ctx, "autodelete_info", seconds,
+                                "Info-panel auto-delete", 86400)
+
+    async def _set_seconds(self, ctx: DiscoContext, key: str, raw: str,
+                           label: str, cap: int) -> None:
+        if raw.lower() in ("none", "off", "clear", "unset", "0"):
+            await self.db.update_guild_setting(ctx.guild.id, key, 0)
+            await self._logcfg(ctx, label, "off")
+            await send_v2(ctx, Container(accent_color=C_SUCCESS).text(f"{label} turned **off**."))
+            return
+        try:
+            n = int(raw)
+        except ValueError:
+            await send_v2(ctx, Container(accent_color=C_ERROR).text(
+                f"Give a whole number of seconds (0-{cap})."))
+            return
+        if not (0 <= n <= cap):
+            await send_v2(ctx, Container(accent_color=C_ERROR).text(
+                f"{label}: must be between 0 and {cap} seconds."))
+            return
+        await self.db.update_guild_setting(ctx.guild.id, key, n)
+        await self._logcfg(ctx, label, f"{n}s")
+        await send_v2(ctx, Container(accent_color=C_SUCCESS).text(
+            f"{label} set to {n} second(s)." if n else f"{label} turned off."))
 
     # -- helpers --------------------------------------------------------------
 

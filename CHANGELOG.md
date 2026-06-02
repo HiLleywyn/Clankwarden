@@ -2,6 +2,34 @@
 
 ## [clankwarden] -- 2026-06-02
 
+### Pre-deploy cleanup
+- **Plain command names (dropped the prison theme).** `.clank @user` now clanks
+  directly and `.unclank @user` releases (the `book`/`parole` subcommands are
+  gone). All the cute names were reverted to plain ones, with the old cryptic
+  names kept as aliases: `hunter` (was snitch), `links` (was snitchline/cline),
+  `guard`/`clean`/`automod`/`sweep`/`isolate`/`quiet`/`check`/`taunt` (were
+  clamp/clear/clasp/clutch/cloister/clad/clink/clarion), and
+  `list`/`info`/`evidence`/`scan`/`sync`/`tree`/`stats`.
+- **More slash commands.** Added `/help`, `/clank` and `/unclank` (the last two
+  restricted to the mod team + the clanker-hunter role); fixed the blank
+  descriptions on `/kick` and `/untimeout`; every slash command now `defer()`s so
+  it answers instantly instead of burning Discord's 3s budget.
+- **Report flow.** You can no longer report yourself, a bot, a moderator, or a
+  clanker hunter. Every report alert now carries a **False report (30m)** button
+  that clanks the *reporter* into the tank for 30 minutes.
+- **Tank hardening.** Clankers can no longer message in threads (no escape-room
+  spam), post images/attachments/embeds, create threads, run polls, or react in
+  the tank.
+- **`.init` sets up clanker hunters.** The wizard now creates the Clanker Hunter
+  role and a `clanker-hunters` report channel under the Clanktank category and
+  saves both (`scam_hunter_role` / `scam_report_channel`).
+- **Auto-delete (new, opt-in).** Two per-guild tiers: `autodelete_replies` for
+  command/mod replies and `autodelete_info` for informational panels
+  (`.help`/`.about`/`.settings`), set via `.set autodelete`/`.set autodeleteinfo`
+  or the web UI. Both default to off; escape-room messages are never deleted.
+- **`.settings` shows everything**, including the dehoist and auto-delete
+  sections.
+
 ### Changes
 - **Rebrand: Clanksimus Prime is now Clankwarden.** Manifest (`slug`/`name`/
   `repo`), entrypoint, help/about/invite UI, API title and all docs updated.

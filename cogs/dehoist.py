@@ -450,7 +450,18 @@ class SmartDehoist(ModCog):
     async def slash_report(self, interaction: discord.Interaction,
                            user: discord.Member, reason: str = "") -> None:
         """Public, in-the-moment report -> posts an actionable alert for mods."""
+        await interaction.response.defer(ephemeral=True)
+        if user.id == interaction.user.id:
+            await interaction.followup.send("You can't report yourself, lol.", ephemeral=True)
+            return
+        if user.bot:
+            await interaction.followup.send("That's a bot -- nothing to report.", ephemeral=True)
+            return
         s = await self._settings(interaction.guild_id)
+        if self._is_protected(user, s):
+            await interaction.followup.send(
+                "You can't report a moderator or a clanker hunter.", ephemeral=True)
+            return
         sig = await self._signals(interaction.guild, s)
         det = dh.classify({user.name, user.display_name}, sig, display_name=user.display_name)
         cid = s.get("dehoist_log_channel") or s.get("scam_report_channel") \
@@ -469,8 +480,17 @@ class SmartDehoist(ModCog):
                           "auto_match": det.matched if det else "none"})
         except Exception:
             pass
-        await interaction.response.send_message(
+        await interaction.followup.send(
             "Thanks -- your report was sent to the moderators.", ephemeral=True)
+
+    def _is_protected(self, member: discord.Member, s: dict) -> bool:
+        """A member who can't be reported: mods/admins and clanker hunters."""
+        p = getattr(member, "guild_permissions", None)
+        if p and (p.administrator or p.manage_guild or p.manage_roles
+                  or p.manage_messages or p.moderate_members):
+            return True
+        hid = s.get("scam_hunter_role")
+        return bool(hid and any(r.id == int(hid) for r in getattr(member, "roles", [])))
 
     @app_commands.command(name="dehoist", description="Dehoist a specific member right now.")
     @app_commands.guild_only()
@@ -483,6 +503,7 @@ class SmartDehoist(ModCog):
                 and not interaction.user.guild_permissions.administrator:
             await interaction.response.send_message("You need Manage Server.", ephemeral=True)
             return
+        await interaction.response.defer(ephemeral=True)
         s = await self._settings(interaction.guild_id)
         sig = await self._signals(interaction.guild, s)
         det = dh.classify({user.name, user.display_name}, sig, display_name=user.display_name)
@@ -490,14 +511,14 @@ class SmartDehoist(ModCog):
             # Force a plain hoist-strip even without a pattern match.
             clean = dh.clean_nick(user.display_name)
             if clean == user.display_name:
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     f"`{user.display_name}` has nothing to dehoist.", ephemeral=True)
                 return
             det = dh.Detection(kind="hoist", matched="manual", confidence=1.0,
                                clean_nick=clean)
         mode = _mode_of(s)
         await self._act(user, det, mode if mode != "off" else "rename", "manual", s)
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"Dehoisted {user.mention} -> `{det.clean_nick}`.", ephemeral=True)
 
 
@@ -601,6 +622,7 @@ class _ReportAlert(discord.ui.LayoutView):
         super().__init__(timeout=86400)
         self.cog = cog
         self.target = target
+        self.reporter = reporter
         auto = f"auto-match: {det.matched} ({det.kind})" if det else "no auto-match"
         rows: list[discord.ui.Item] = [
             discord.ui.TextDisplay("## Scammer report"),
@@ -611,10 +633,17 @@ class _ReportAlert(discord.ui.LayoutView):
                 f"**Reason**  {reason or '_none given_'}\n"
                 f"**Signal**  {auto}"),
         ]
-        btn = discord.ui.Button(label="Clank", style=discord.ButtonStyle.danger,
-                                custom_id=f"rep:clank:{target.id}")
-        btn.callback = self._clank
-        rows.append(discord.ui.Section(discord.ui.TextDisplay("-# Mods:"), accessory=btn))
+        clank_btn = discord.ui.Button(label="Clank", style=discord.ButtonStyle.danger,
+                                      custom_id=f"rep:clank:{target.id}")
+        clank_btn.callback = self._clank
+        false_btn = discord.ui.Button(label="False report (30m)", style=discord.ButtonStyle.secondary,
+                                      custom_id=f"rep:false:{reporter.id}")
+        false_btn.callback = self._false
+        rows.append(discord.ui.Section(
+            discord.ui.TextDisplay("-# Mods: clank the reported user..."), accessory=clank_btn))
+        rows.append(discord.ui.Section(
+            discord.ui.TextDisplay("-# ...or, if this report is bogus, clank the reporter for 30m."),
+            accessory=false_btn))
         self.add_item(discord.ui.Container(*rows, accent_color=C_ERROR))
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
@@ -634,6 +663,23 @@ class _ReportAlert(discord.ui.LayoutView):
             await interaction.response.send_message(f"Clanked {self.target.mention}.", ephemeral=True)
         except Exception:
             await interaction.response.send_message("Clank failed.", ephemeral=True)
+
+    async def _false(self, interaction: discord.Interaction) -> None:
+        """False report: clank the *reporter* for 30 minutes."""
+        clank = self.cog.bot.get_cog("Clanktank")
+        member = interaction.guild.get_member(getattr(self.reporter, "id", 0))
+        if clank is None or not hasattr(clank, "warden_contain") or member is None:
+            await interaction.response.send_message(
+                "Can't action that (reporter left, or clank cog unavailable).", ephemeral=True)
+            return
+        try:
+            await clank.warden_contain(
+                member, reason=f"False scam report (marked by {interaction.user})",
+                duration_s=1800)
+            await interaction.response.send_message(
+                f"Marked false -- clanked {member.mention} for 30 minutes.", ephemeral=True)
+        except Exception:
+            await interaction.response.send_message("Couldn't clank the reporter.", ephemeral=True)
 
 
 class _DehoistConfig(discord.ui.LayoutView):

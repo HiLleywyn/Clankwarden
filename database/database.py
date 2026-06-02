@@ -257,6 +257,8 @@ _GUILD_KEY_ALIASES: dict[str, str] = {
     "DEHOIST_LOG_CHANNEL_ID": "dehoist_log_channel",
     "DEHOIST_TRIGGERS": "dehoist_triggers",
     "DEHOIST_TOPICS": "dehoist_topics",
+    "AUTODELETE_REPLIES": "autodelete_replies",
+    "AUTODELETE_INFO": "autodelete_info",
 }
 
 
