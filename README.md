@@ -5,7 +5,7 @@ chatlogs, sync, import/export and settings -- plus the `.clank` account
 **containment** subset. Everything is rendered in Discord's **Components V2**
 UI, with **no premium tiers and no paywalls**. Built on the shared
 [`bot framework`](https://github.com/hilleywyn/framework) and templated for the
-[Sojourns](https://github.com/hilleywyn/sojourns) platform.
+[Auren](https://github.com/hilleywyn/auren) platform.
 
 > Inspired by what Xenon does for server management -- rebuilt on a modern,
 > open stack with the premium gating removed.
@@ -46,7 +46,7 @@ docker run --env-file .env -p 8080:8080 clanksimus
 
 - **[`docs/deployment.md`](docs/deployment.md)** -- the thick, end-to-end
   deployment guide: prerequisites and all four pathways (local/bare-metal,
-  Docker, Railway, Sojourns), post-deploy verification, upgrades/rollback and
+  Docker, Railway, Auren), post-deploy verification, upgrades/rollback and
   troubleshooting. **Start here.**
 - [`docs/configuration.md`](docs/configuration.md) -- every environment
   variable, grouped by feature, with defaults and effects.
@@ -55,9 +55,9 @@ docker run --env-file .env -p 8080:8080 clanksimus
 
 ## How it's built
 
-`main.py` boots from `sojourns.json` through the framework's shared runtime
+`main.py` boots from `auren.json` through the framework's shared runtime
 (`run_manifest`). The manifest's `features` list is the set of cogs to load and
-doubles as the deployment contract the Sojourns control plane reads. The data
+doubles as the deployment contract the Auren control plane reads. The data
 plane is a slim, economy-free Postgres layer with a file-based migration runner.
 The UI is Components V2 throughout (`core.framework.components`).
 

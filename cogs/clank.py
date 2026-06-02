@@ -2455,7 +2455,7 @@ class Clanktank(commands.Cog):
         """Resolve a containment channel/thread id.
 
         Reads the per-guild value an operator set with ``.set`` or in the
-        Sojourns UI (stored in guild_settings), falling back to the env var.
+        Auren UI (stored in guild_settings), falling back to the env var.
         This is the single source of truth -- the clank cog must NOT read the
         Config.* env value directly, or per-guild settings are silently ignored.
 
@@ -2494,7 +2494,7 @@ class Clanktank(commands.Cog):
         """Per-guild mandatory reflection wait, falling back to the env default.
 
         Stored as ``clank_escape_wait_minutes`` in guild_settings (set in
-        Discord with ``.set reflection`` or in the Sojourns web UI). Clamped to
+        Discord with ``.set reflection`` or in the Auren web UI). Clamped to
         a sane 1..120 range so a bad value can never wedge the escape room."""
         val = await self._guild_channel_id(
             guild_id, "clank_escape_wait_minutes", Config.CLANK_ESCAPE_WAIT_MINUTES)
@@ -4367,7 +4367,7 @@ class Clanktank(commands.Cog):
         """Fetch the configured shared escape thread.
 
         Order: runtime override (.clank er setthread) -> per-guild setting
-        (clank_escape_thread, set via .set or Sojourns) -> env var.
+        (clank_escape_thread, set via .set or Auren) -> env var.
         """
         tid = self._escape_thread_override
         if not tid:
@@ -8014,7 +8014,7 @@ class _ClankerHelpView(discord.ui.LayoutView):
                 f"(or live with `{p}clank er setthread`)\n"
                 f"`{p}set reflection <minutes>` -- station 5 waiting-room delay (default: 5)\n"
                 f"`{p}set modlog #channel` -- the comprehensive mod log\n"
-                f"-# Every option above is also editable in the Sojourns web UI."
+                f"-# Every option above is also editable in the Auren web UI."
             ),
         ]
 

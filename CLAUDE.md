@@ -9,7 +9,7 @@
 Clanksimus Prime is a Discord containment + moderation bot (the `.clank` group, the
 `mod` command set, the `modlog` audit system, `.set` settings and the `.init`
 setup wizard), built on the shared **bot framework** (`hilleywyn/framework`)
-and templated for the **Sojourns** platform via `sojourns.json`.
+and templated for the **Auren** platform via `auren.json`.
 
 ## Default UI -- Components V2 (hard rule)
 
@@ -34,11 +34,11 @@ feature genuinely requires one (there are currently none). This needs
 
 ## Architecture
 
-- `main.py` -- three lines: `run_manifest()` boots from `sojourns.json`
+- `main.py` -- three lines: `run_manifest()` boots from `auren.json`
   (its `features` is the cog list) with a fallback cog list.
-- `sojourns.json` -- the manifest. Source of truth for cogs + settings; the
-  Sojourns control plane reads the same file. Validate with
-  `python -m core.framework.manifest sojourns.json`.
+- `auren.json` -- the manifest. Source of truth for cogs + settings; the
+  Auren control plane reads the same file. Validate with
+  `python -m core.framework.manifest auren.json`.
 - `cogs/` -- features. `clank.py` is the containment subset (group `.clank`,
   alias `.clanker`); `mod.py` is the moderation command set; `modlog.py` is the
   comprehensive mod-logging cog (gateway listeners + `.modlog` controls);
