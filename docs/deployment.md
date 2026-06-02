@@ -42,17 +42,27 @@ install pulls that package from git.
 
 ### 1.2 Inviting the bot
 
-Clanksimus creates and deletes roles, channels and webhooks (that is the whole
-job), so it needs the **Administrator** permission. Build an invite URL:
+Clanksimus Prime asks for only the permissions it actually uses -- **never
+Administrator**. The set is defined once in `clanklib/permissions.py` and drives
+the invite link, the `.setup` audit, and the Auren platform's Invite button:
+
+- View Channels, Send Messages, Embed Links, Read Message History (core)
+- Manage Roles (apply the Clanker containment role)
+- Manage Messages (clean up / purge), Moderate Members (timeout)
+- Kick Members, Ban Members (the moderation command set)
+- Manage Channels (create containment channels, lock channels)
+- View Audit Log, Manage Server (attribute events / resolve join invites for logging)
+
+Build an invite URL (the `permissions` value is the union of the above):
 
 ```
-https://discord.com/oauth2/authorize?client_id=<CLIENT_ID>&permissions=8&scope=bot%20applications.commands
+https://discord.com/oauth2/authorize?client_id=<CLIENT_ID>&permissions=1099780156598&scope=bot%20applications.commands
 ```
 
 Once the bot is running you can also just type `.invite` (or `.about`) and it
-prints this URL for you. Administrator (`permissions=8`) is required for
-backup/template restores; without it, restores will partially fail with
-permission errors.
+prints this exact URL for you, or `.setup` to audit what is missing. Make sure
+the bot's role sits **above** the Clanker role and any roles it needs to manage,
+or containment/moderation actions will fail with permission errors.
 
 ### 1.3 A PostgreSQL database
 
