@@ -1538,14 +1538,25 @@ class Clanktank(commands.Cog):
             log.debug("clanktank: purge failed channel=%s", channel.id, exc_info=True)
             return []
 
-    def _is_tank_surface(self, channel: discord.abc.Messageable) -> bool:
-        tank_id = Config.CLANKTANK_CHANNEL_ID
-        if not tank_id:
-            return False
+    async def _is_tank_surface(self, channel: discord.abc.Messageable,
+                               guild_id: int | None = None) -> bool:
+        """Whether a channel is a containment surface for ``guild_id``.
+
+        Resolves the tank + escape-room from the guild's own settings (with the
+        env var only as a fallback), NOT the global env id -- so a clanker's
+        messages in their own server's tank and escape room are never treated as
+        "outside containment" and deleted. The escape room is a thread off the
+        tank, so it matches either by id or by parent."""
         ch_id = int(getattr(channel, "id", 0) or 0)
-        if ch_id == tank_id:
+        if not ch_id:
+            return False
+        tank_id = await self._guild_channel_id(
+            guild_id, "clanktank_channel", Config.CLANKTANK_CHANNEL_ID)
+        escape_id = await self._guild_channel_id(
+            guild_id, "clank_escape_thread", Config.CLANK_ESCAPE_THREAD_ID)
+        if ch_id == tank_id or (escape_id and ch_id == escape_id):
             return True
-        if isinstance(channel, discord.Thread):
+        if tank_id and isinstance(channel, discord.Thread):
             return int(getattr(channel, "parent_id", 0) or 0) == tank_id
         return False
 
@@ -2124,7 +2135,7 @@ class Clanktank(commands.Cog):
             desc = "\n".join(f"  {n}" for n in member_names)
             if overflow > 0:
                 desc += f"\n  ...and {overflow} more"
-            await self._log_mod(_v2(
+            await self._log_mod(gid, _v2(
                 f"Clanker Cluster Formed: [{cluster_id}]",
                 color=C_WARNING,
                 desc=desc,
@@ -2507,7 +2518,12 @@ class Clanktank(commands.Cog):
         ch = self.bot.get_channel(cid) if cid else None
         return ch if isinstance(ch, discord.TextChannel) else None
 
-    async def _log_mod(self, view: discord.ui.LayoutView, guild_id: int | None = None) -> None:
+    async def _log_mod(self, guild_id: int, view: discord.ui.LayoutView) -> None:
+        """Post a containment log panel to one guild's clank-log channel.
+    
+        ``guild_id`` is REQUIRED and threaded from the originating event so a
+        panel can only ever land in the server the event happened in -- never
+        another guild the bot also moderates."""
         cid = await self._guild_channel_id(
             guild_id, "clanktank_log_channel", Config.CLANKTANK_LOG_CHANNEL_ID)
         if not cid:
@@ -2579,7 +2595,7 @@ class Clanktank(commands.Cog):
             },
         )
         kind = "URL" if hit_url else "crypto address"
-        await self._log_mod(_v2(
+        await self._log_mod(gid, _v2(
             "Clasp Guard: Ambient Detection",
             color=C_AMBER,
             fields=[
@@ -2730,7 +2746,7 @@ class Clanktank(commands.Cog):
             return
 
         all_actioned = clanked + already
-        await self._log_mod(_v2(
+        await self._log_mod(gid, _v2(
             "Scam Hunter Report",
             color=C_WARNING,
             fields=[
@@ -2989,7 +3005,7 @@ class Clanktank(commands.Cog):
 
         ts = rec.get("clanked_at") if rec else None
         dur = _duration_str(ts.timestamp() if isinstance(ts, datetime) else float(ts)) if ts else "?"
-        await self._log_mod(_v2(
+        await self._log_mod(gid, _v2(
             "Escape Attempt Reverted",
             color=C_WARNING,
             fields=[
@@ -3034,7 +3050,7 @@ class Clanktank(commands.Cog):
 
         ts = rec.get("clanked_at") if rec else None
         dur = _duration_str(ts.timestamp() if isinstance(ts, datetime) else float(ts)) if ts else "?"
-        await self._log_mod(_v2(
+        await self._log_mod(gid, _v2(
             "Clanker Left Server",
             color=C_WARNING,
             fields=[
@@ -3066,7 +3082,7 @@ class Clanktank(commands.Cog):
                         f"Auto-clank: scam keyword in username ({scam_kw!r})",
                         None, defer_purge=True,
                     )
-                    await self._log_mod(_v2(
+                    await self._log_mod(gid, _v2(
                         "Auto-Clank: Scam Username",
                         color=C_WARNING,
                         fields=[
@@ -3094,7 +3110,7 @@ class Clanktank(commands.Cog):
                         f"Auto-clank: public figure impersonation ({celeb_hit!r})",
                         None, defer_purge=True,
                     )
-                    await self._log_mod(_v2(
+                    await self._log_mod(gid, _v2(
                         "Auto-Clank: Celebrity / Public Figure Impersonation",
                         color=C_WARNING,
                         fields=[
@@ -3126,7 +3142,7 @@ class Clanktank(commands.Cog):
                             f"Auto-clank: CCI score {score:.0%} (100% confidence)",
                             None, defer_purge=True,
                         )
-                        await self._log_mod(_v2(
+                        await self._log_mod(gid, _v2(
                             "Auto-Clank: CCI 100% Confidence",
                             color=C_WARNING,
                             fields=[
@@ -3238,7 +3254,7 @@ class Clanktank(commands.Cog):
                     f"Pre-added to cluster {cluster_id_added}. Use .clank cluster cleave {cluster_id_added} to mass-clank."
                     if cluster_id_added else "Alert only -- no automatic action taken."
                 )
-                await self._log_mod(_v2(title, color=C_WARNING, fields=_sj_fields, footer=_sj_footer))
+                await self._log_mod(gid, _v2(title, color=C_WARNING, fields=_sj_fields, footer=_sj_footer))
                 await self._audit(
                     "suspicious_join", gid, user_id=uid,
                     details={
@@ -3288,7 +3304,7 @@ class Clanktank(commands.Cog):
             details={"rejoin_count": int(rec.get("rejoin_count") or 0) if rec else None},
         )
 
-        await self._log_mod(_v2(
+        await self._log_mod(gid, _v2(
             "Clanker Rejoined -- Containment Re-applied",
             color=C_WARNING,
             fields=[
@@ -3323,7 +3339,7 @@ class Clanktank(commands.Cog):
 
         await self._clamp_ambient_guard(message)
         content = message.content or ""
-        in_tank_surface = self._is_tank_surface(message.channel)
+        in_tank_surface = await self._is_tank_surface(message.channel, gid)
         _gs = await self.bot.db.get_guild_settings(gid)
 
         # Detect staff user pings.
@@ -3355,7 +3371,7 @@ class Clanktank(commands.Cog):
                 message,
                 reason="Clanktank: deleting staff ping from contained account",
             )
-            await self._log_mod(_v2(
+            await self._log_mod(gid, _v2(
                 "Staff Ping from Clanker",
                 color=C_WARNING,
                 fields=[
@@ -3394,7 +3410,7 @@ class Clanktank(commands.Cog):
                     "channel_id": message.channel.id,
                 },
             )
-            await self._log_mod(_v2(
+            await self._log_mod(gid, _v2(
                 "Role Ping from Clanker",
                 color=C_WARNING,
                 fields=[
@@ -3445,7 +3461,7 @@ class Clanktank(commands.Cog):
                     "has_addr": _has_addr,
                 },
             )
-            await self._log_mod(_v2(
+            await self._log_mod(gid, _v2(
                 "URL/Address Blocked",
                 color=C_WARNING,
                 fields=[
@@ -3608,7 +3624,7 @@ class Clanktank(commands.Cog):
                     purged_extra = await self._purge_visible_messages(member, ch)
                     if purged_extra:
                         await self._store_evidence(uid, gid, purged_extra, "automod_hit")
-            await self._log_mod(_v2(
+            await self._log_mod(gid, _v2(
                 "AutoMod Hit -- Already Clanked",
                 color=C_WARNING,
                 fields=[
@@ -3666,7 +3682,7 @@ class Clanktank(commands.Cog):
                 pass
 
         account_age = _age_str(member.created_at) if member.created_at else "?"
-        await self._log_mod(_v2(
+        await self._log_mod(gid, _v2(
             "AutoMod Auto-Clank",
             color=C_WARNING,
             fields=[
@@ -3947,7 +3963,7 @@ class Clanktank(commands.Cog):
                 other_m = guild.get_member(other) if guild else None
                 other_name = f"{other_m} ({other})" if other_m else f"ID:{other}"
                 lines.append(f"- {other_name}: {', '.join(conn['reasons'])}")
-            await self._log_mod(_v2(
+            await self._log_mod(gid, _v2(
                 "Account Connections Detected",
                 color=C_WARNING,
                 desc="\n".join(lines),
@@ -4169,7 +4185,7 @@ class Clanktank(commands.Cog):
                     names_preview.append(str(m) if m else f"ID:{mu}")
                 overflow = len(member_uids) - 10
                 T_days = cm["T"] / 86400.0
-                await self._log_mod(_v2(
+                await self._log_mod(gid, _v2(
                     f"CCI Cluster Detected: [{cluster_id}]",
                     color=C_WARNING,
                     desc="\n".join(f"  {n}" for n in names_preview) + (f"\n  ...+{overflow} more" if overflow > 0 else ""),
@@ -4273,7 +4289,7 @@ class Clanktank(commands.Cog):
             _duration_str(ts.timestamp() if isinstance(ts, datetime) else float(ts))
             if ts else "?"
         )
-        await self._log_mod(_v2(
+        await self._log_mod(guild_id, _v2(
             "Clanker Released",
             color=C_SUCCESS,
             fields=[
@@ -4667,7 +4683,7 @@ class Clanktank(commands.Cog):
                 try:
                     released, _rec, restored = await self._do_release(uid, gid)
                     if released:
-                        await self._log_mod(_v2(
+                        await self._log_mod(gid, _v2(
                             f"Escape Complete: Released Case #{case_num:06d}",
                             color=C_SUCCESS,
                             fields=[
@@ -4682,7 +4698,7 @@ class Clanktank(commands.Cog):
                 except Exception:
                     log.exception("clanktank: escape release failed uid=%s", uid)
 
-            await self._log_mod(_v2(
+            await self._log_mod(gid, _v2(
                 f"Escape Complete: Case #{case_num:06d}",
                 color=C_SUCCESS,
                 fields=[
@@ -4989,7 +5005,7 @@ class Clanktank(commands.Cog):
         ) or "none"
         account_age = _age_str(user.created_at) if user.created_at else "?"
         join_age = _age_str(user.joined_at) if user.joined_at else "?"
-        await self._log_mod(_v2(
+        await self._log_mod(ctx.guild.id, _v2(
             "Clanker Added",
             color=C_WARNING,
             fields=[
@@ -5745,7 +5761,7 @@ class Clanktank(commands.Cog):
         except Exception:
             await ctx.reply(view=result_view, mention_author=False)
 
-        await self._log_mod(_v2(
+        await self._log_mod(ctx.guild.id, _v2(
             "Clanktank Role Band Scan",
             color=C_INFO,
             fields=[
@@ -5862,7 +5878,7 @@ class Clanktank(commands.Cog):
         except Exception:
             await ctx.reply(view=result_view, mention_author=False)
 
-        await self._log_mod(_v2(
+        await self._log_mod(ctx.guild.id, _v2(
             "Clanktank Active Scan",
             color=C_INFO,
             fields=[
@@ -5941,7 +5957,7 @@ class Clanktank(commands.Cog):
             mention_author=False,
         )
 
-        await self._log_mod(_v2(
+        await self._log_mod(ctx.guild.id, _v2(
             "Clanktank Sync",
             color=C_INFO,
             fields=[
@@ -6416,7 +6432,7 @@ class Clanktank(commands.Cog):
         log_lines = clanked_names[:20]
         if len(clanked_names) > 20:
             log_lines.append(f"...and {len(clanked_names) - 20} more")
-        await self._log_mod(_v2(
+        await self._log_mod(ctx.guild.id, _v2(
             f"Cluster Cleave: [{cluster_id}]",
             color=C_WARNING,
             fields=[
@@ -7019,7 +7035,7 @@ class Clanktank(commands.Cog):
                 "messages_deleted": deleted,
             },
         )
-        await self._log_mod(_v2(
+        await self._log_mod(ctx.guild.id, _v2(
             "Cloister: User Isolated",
             color=C_AMBER,
             fields=[
@@ -7097,7 +7113,7 @@ class Clanktank(commands.Cog):
             actor_id=ctx.author.id,
             details={"muted": muted, "tank_messages_deleted": deleted},
         )
-        await self._log_mod(_v2(
+        await self._log_mod(gid, _v2(
             "Clad: Bulk Mute + Tank Purge",
             color=C_ERROR,
             fields=[
@@ -7284,7 +7300,7 @@ class Clanktank(commands.Cog):
         self._clarion_msg_ids.add(sent.id)
         dq.append(now)
 
-        await self._log_mod(_v2(
+        await self._log_mod(ctx.guild.id, _v2(
             "Clarion Sent",
             color=C_INFO,
             fields=[

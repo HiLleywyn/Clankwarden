@@ -2,6 +2,21 @@
 
 ## [clankwarden] -- 2026-06-02
 
+### Containment -- critical fixes
+- **Clank logs no longer leak across servers.** `_log_mod` resolved the
+  clank-log channel from "whichever guild the bot is in has one configured,"
+  which sent one server's containment logs into a *different* server's
+  clank-log channel when the bot moderates more than one guild. Every clank
+  log now carries the guild the event happened in (`guild_id` is a required
+  argument), so a panel can only ever post to its own server.
+- **Clankers can talk in the tank and the escape room again.**
+  `_is_tank_surface` only recognised the tank via the `CLANKTANK_CHANNEL_ID`
+  env var, so a server set up through `.init` (which stores the tank as a
+  per-guild setting) had every clanker message -- including in the escape-room
+  thread -- treated as "outside containment" and deleted, making `.clank
+  escape` impossible. It now resolves the tank and escape thread from the
+  guild's own settings.
+
 ### Mod-log
 - **Global ignore list (new).** A per-server list of channels the mod log
   excludes entirely: any event originating in an ignored channel is never posted
