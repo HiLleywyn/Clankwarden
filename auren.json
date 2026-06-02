@@ -9,6 +9,10 @@
     "repo": "hilleywyn/clanksimus-prime"
   },
   "channels": ["discord"],
+  "discord": {
+    "permissions": "1099780156598",
+    "scopes": ["bot", "applications.commands"]
+  },
   "runtime": {
     "dockerfile": "Dockerfile",
     "entrypoint": "main.py"
