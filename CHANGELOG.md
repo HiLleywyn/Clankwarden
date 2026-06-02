@@ -3,6 +3,15 @@
 ## [clanksimus-prime] -- 2026-06-02
 
 ### Changes
+- **Invite now covers every feature (still no Administrator).** The previous
+  least-privilege set was missing five permissions the bot genuinely uses, so
+  some actions failed after a fresh invite. Added to `clanklib/permissions.py`
+  (the single source of truth): `add_reactions` (the `.clank` confirmation
+  prompts), `attach_files` (the Clanktank chart image), `create_private_threads`
+  (the `.clank` cloister review thread), `create_public_threads` (the `.setup`
+  escape-room thread), and `send_messages_in_threads` (posting in both). The
+  invite/`.setup` audit/manifest value moves from `1099780156598` to
+  `1477737311478`; the manifest-vs-code test keeps them in lockstep.
 - **Least-privilege invite everywhere.** The leftover `.help` "Add to server"
   button (`cogs/_help_view.py`) still built an Administrator (`permissions=8`)
   invite; it now uses the single source of truth in `clanklib/permissions.py`

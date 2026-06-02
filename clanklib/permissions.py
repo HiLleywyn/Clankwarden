@@ -42,19 +42,30 @@ class FeaturePerm:
 FEATURES: tuple[FeaturePerm, ...] = (
     FeaturePerm(
         "core", "Core",
-        ("view_channel", "send_messages", "embed_links", "read_message_history"),
-        "Read and reply in channels.",
+        ("view_channel", "send_messages", "send_messages_in_threads",
+         "embed_links", "attach_files", "add_reactions",
+         "read_message_history"),
+        "Read and reply in channels and threads, react to confirmation "
+        "prompts, and post rich panels and chart images.",
     ),
     FeaturePerm(
         "containment", "Containment (clank)",
-        ("manage_roles", "manage_messages", "moderate_members", "ban_members"),
-        "Apply the Clanker role, clean up messages, and act on offenders.",
+        ("manage_roles", "manage_messages", "moderate_members", "ban_members",
+         "create_private_threads"),
+        "Apply the Clanker role, clean up messages, open the private "
+        "cloister review thread, and act on offenders.",
     ),
     FeaturePerm(
         "moderation", "Moderation commands",
         ("kick_members", "ban_members", "moderate_members", "manage_messages",
          "manage_channels"),
         "Run ban/kick/timeout/purge/lock and the rest of the mod command set.",
+    ),
+    FeaturePerm(
+        "setup", "Server setup (.setup)",
+        ("manage_channels", "manage_roles", "create_public_threads"),
+        "Create the containment role, category and log channels, and the "
+        "public escape-room thread during the setup wizard.",
     ),
     FeaturePerm(
         "logging", "Mod logging and audit",

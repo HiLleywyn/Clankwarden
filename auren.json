@@ -10,7 +10,7 @@
   },
   "channels": ["discord"],
   "discord": {
-    "permissions": "1099780156598",
+    "permissions": "1477737311478",
     "scopes": ["bot", "applications.commands"]
   },
   "runtime": {

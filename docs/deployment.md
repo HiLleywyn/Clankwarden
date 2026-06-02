@@ -46,17 +46,21 @@ Clanksimus Prime asks for only the permissions it actually uses -- **never
 Administrator**. The set is defined once in `clanklib/permissions.py` and drives
 the invite link, the `.setup` audit, and the Auren platform's Invite button:
 
-- View Channels, Send Messages, Embed Links, Read Message History (core)
+- View Channels, Send Messages, Send Messages in Threads, Embed Links, Attach
+  Files, Add Reactions, Read Message History (core: reply, react to the
+  confirmation prompts, post chart images, and talk in threads)
 - Manage Roles (apply the Clanker containment role)
 - Manage Messages (clean up / purge), Moderate Members (timeout)
+- Create Private Threads (the `.clank` cloister review thread)
 - Kick Members, Ban Members (the moderation command set)
 - Manage Channels (create containment channels, lock channels)
+- Create Public Threads (the `.setup` escape-room thread)
 - View Audit Log, Manage Server (attribute events / resolve join invites for logging)
 
 Build an invite URL (the `permissions` value is the union of the above):
 
 ```
-https://discord.com/oauth2/authorize?client_id=<CLIENT_ID>&permissions=1099780156598&scope=bot%20applications.commands
+https://discord.com/oauth2/authorize?client_id=<CLIENT_ID>&permissions=1477737311478&scope=bot%20applications.commands
 ```
 
 Once the bot is running you can also just type `.invite` (or `.about`) and it
