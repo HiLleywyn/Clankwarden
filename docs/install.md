@@ -9,7 +9,7 @@ from git.
 - [2. Local development](#2-local-development)
 - [3. Docker](#3-docker)
 - [4. Railway](#4-railway)
-- [5. Sojourns](#5-sojourns)
+- [5. Auren](#5-auren)
 
 ---
 
@@ -54,7 +54,7 @@ docker run -d --name clanksimus-db -e POSTGRES_PASSWORD=clank \
 Validate the manifest any time with:
 
 ```bash
-python -m core.framework.manifest sojourns.json
+python -m core.framework.manifest auren.json
 ```
 
 ## 3. Docker
@@ -92,20 +92,20 @@ the container healthcheck.
 > Until the framework's Components V2 changes are merged to `main`, point
 > `FRAMEWORK_REF` at the feature branch that contains them.
 
-## 5. Sojourns
+## 5. Auren
 
-Clanksimus ships a `sojourns.json` manifest, so the Sojourns control plane can
+Clanksimus ships a `auren.json` manifest, so the Auren control plane can
 deploy and manage it like any other managed bot:
 
-1. In Sojourns, add a managed bot pointing at this repo. Sojourns reads
-   `sojourns.json` for the bot identity, the `features` (cogs) to load, the
+1. In Auren, add a managed bot pointing at this repo. Auren reads
+   `auren.json` for the bot identity, the `features` (cogs) to load, the
    `credentials` it must collect (`DISCORD_TOKEN`) and the `settings` to render
    as a dynamic config UI.
-2. Provide `DISCORD_TOKEN` when prompted; Sojourns provisions Postgres
+2. Provide `DISCORD_TOKEN` when prompted; Auren provisions Postgres
    (`provision.database = "postgres"`) and injects `DATABASE_URL`.
 3. Adjust settings (prefix, backup cap, API key, containment channels) from the
-   Sojourns settings UI -- each field in the manifest maps to a control and is
+   Auren settings UI -- each field in the manifest maps to a control and is
    pushed to the running bot via `bot.settings`.
 
 The same manifest is what `main.py` boots from locally, so there is no drift
-between a standalone run and a Sojourns-managed deployment.
+between a standalone run and a Auren-managed deployment.

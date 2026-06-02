@@ -1,10 +1,10 @@
 """cogs/settings.py -- per-guild configuration, shown and edited in Components V2.
 
-Every option here is also editable from the Sojourns web UI; the two surfaces
+Every option here is also editable from the Auren web UI; the two surfaces
 write the same per-guild keys (the DB layer normalises the manifest's env-style
 keys onto these), so a value set in Discord and a value set on the web are the
 same value. Keep this in step with ``clanklib.guild_schema.GUILD_FIELDS`` and the
-``containment`` / ``moderation`` groups in ``sojourns.json``.
+``containment`` / ``moderation`` groups in ``auren.json``.
 """
 from __future__ import annotations
 
