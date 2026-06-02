@@ -93,6 +93,15 @@ def test_render_tolerates_float_created_at() -> None:
     assert len(logger._event_hash("", ev)) == 64
 
 
+def test_ignored_channel_ids_coerces_and_drops_junk() -> None:
+    # JSONB round-trips can yield ints or strings; both coerce, junk is dropped.
+    assert modlog._ignored_channel_ids({"modlog_ignored_channels": [1, "2", "x", None]}) == {1, 2}
+    # missing / empty / wrong-typed settings yield an empty set, never raise.
+    assert modlog._ignored_channel_ids({}) == set()
+    assert modlog._ignored_channel_ids({"modlog_ignored_channels": None}) == set()
+    assert modlog._ignored_channel_ids({"modlog_ignored_channels": "nope"}) == set()
+
+
 def test_render_builds_a_layout_view() -> None:
     ev = LogEvent(category=Category.MODERATION, event_type="member.ban", guild_id=1,
                   severity=Severity.ALERT, target=12345,

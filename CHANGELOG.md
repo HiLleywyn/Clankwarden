@@ -2,6 +2,45 @@
 
 ## [clankwarden] -- 2026-06-02
 
+### Containment -- critical fixes
+- **Per-guild escape rooms.** Escape-thread resolution no longer prefers a
+  single global override seeded from "some guild's" `clank_escape_thread`
+  (`LIMIT 1`), which pointed every server's clankers at one server's escape
+  room and made `.clank escape` report "not configured" when a server's thread
+  was, in fact, set. Each guild now resolves its OWN `clank_escape_thread`
+  first (env/override only as a fallback), threaded through every caller
+  (`.clank escape`, the station-4 refresh, view restore, and the `.clank er`
+  admin commands). The tank channel is likewise resolved per-guild everywhere
+  it was still read straight from `CLANKTANK_CHANNEL_ID`.
+- **Mod-log: no more dead channels.** `.init` created a `log-<category>`
+  channel for every category, but `command`, `ai`, `clanktank` and `analytics`
+  have no event producer, so those channels stayed permanently empty ("half the
+  logs don't populate"). `.init` now provisions a channel only for categories
+  that actually emit. (Existing servers can delete the four empty channels or
+  re-run `.init`.)
+- **Clank logs no longer leak across servers.** `_log_mod` resolved the
+  clank-log channel from "whichever guild the bot is in has one configured,"
+  which sent one server's containment logs into a *different* server's
+  clank-log channel when the bot moderates more than one guild. Every clank
+  log now carries the guild the event happened in (`guild_id` is a required
+  argument), so a panel can only ever post to its own server.
+- **Clankers can talk in the tank and the escape room again.**
+  `_is_tank_surface` only recognised the tank via the `CLANKTANK_CHANNEL_ID`
+  env var, so a server set up through `.init` (which stores the tank as a
+  per-guild setting) had every clanker message -- including in the escape-room
+  thread -- treated as "outside containment" and deleted, making `.clank
+  escape` impossible. It now resolves the tank and escape thread from the
+  guild's own settings.
+
+### Mod-log
+- **Global ignore list (new).** A per-server list of channels the mod log
+  excludes entirely: any event originating in an ignored channel is never posted
+  and never escalates, and message edits/deletes there are not even recorded (so
+  an ignored channel stays genuinely private). Manage it with
+  `.modlog ignore` (show), `.modlog ignore add #ch ...`,
+  `.modlog ignore remove #ch ...` and `.modlog ignore clear`; the
+  `.modlog` panel now lists the ignored channels.
+
 ### Pre-deploy cleanup
 - **Plain command names (dropped the prison theme).** `.clank @user` now clanks
   directly and `.unclank @user` releases (the `book`/`parole` subcommands are

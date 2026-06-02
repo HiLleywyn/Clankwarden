@@ -17,7 +17,7 @@ from __future__ import annotations
 import discord
 from discord.ext import commands
 
-from clanklib.modlog import Category as _ModCategory
+from clanklib.modlog import PRODUCING_CATEGORIES as _PRODUCING_CATEGORIES
 from clanklib.permissions import ModCog
 from core.framework.context import DiscoContext
 from core.framework.ui import C_ERROR, C_INFO, C_NAVY, C_SUCCESS
@@ -354,10 +354,12 @@ class SetupWizard(ModCog):
             view.created.channels.append(mod_cat.id)
             view.summary_lines.append(f"Created category **{mod_cat.name}** (mod/admin only)")
 
-            # One channel per mod-log category, each auto-routed.
+            # One channel per mod-log category that actually emits events, each
+            # auto-routed. Categories with no producer (command, ai, clanktank,
+            # analytics) are skipped so we never create channels that stay empty.
             await view.update_running("Creating the per-category mod-log channels...")
             routes: dict[str, int] = {}
-            for cat in _ModCategory:
+            for cat in _PRODUCING_CATEGORIES:
                 ch = await guild.create_text_channel(
                     f"log-{cat.value}", category=mod_cat, reason=reason)
                 view.created.channels.append(ch.id)
