@@ -1,1 +1,1 @@
-"""Clanksimus Prime HTTP API package."""
+"""Clankwarden HTTP API package."""

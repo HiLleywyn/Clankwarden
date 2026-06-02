@@ -110,7 +110,7 @@ class Moderation(GuildCog):
 
     # -- ban / unban / softban ------------------------------------------------
 
-    @commands.command(name="ban")
+    @commands.hybrid_command(name="ban")
     @commands.has_guild_permissions(ban_members=True)
     @commands.bot_has_guild_permissions(ban_members=True)
     async def ban(self, ctx: DiscoContext, user: discord.User, *, reason: str = "No reason given") -> None:
@@ -260,7 +260,7 @@ class Moderation(GuildCog):
 
     # -- kick -----------------------------------------------------------------
 
-    @commands.command(name="kick")
+    @commands.hybrid_command(name="kick")
     @commands.has_guild_permissions(kick_members=True)
     @commands.bot_has_guild_permissions(kick_members=True)
     async def kick(self, ctx: DiscoContext, member: discord.Member, *, reason: str = "No reason given") -> None:
@@ -280,7 +280,7 @@ class Moderation(GuildCog):
 
     # -- timeout / untimeout --------------------------------------------------
 
-    @commands.command(name="timeout", aliases=["mute"])
+    @commands.hybrid_command(name="timeout", aliases=["mute"])
     @commands.has_guild_permissions(moderate_members=True)
     @commands.bot_has_guild_permissions(moderate_members=True)
     async def timeout(self, ctx: DiscoContext, member: discord.Member, duration: str,
@@ -307,7 +307,7 @@ class Moderation(GuildCog):
                            duration=_fmt_duration(secs), reason=reason)
         await self._ok(ctx, f"Timed out **{member}** for {_fmt_duration(secs)}. Reason: {reason}")
 
-    @commands.command(name="untimeout", aliases=["unmute"])
+    @commands.hybrid_command(name="untimeout", aliases=["unmute"])
     @commands.has_guild_permissions(moderate_members=True)
     @commands.bot_has_guild_permissions(moderate_members=True)
     async def untimeout(self, ctx: DiscoContext, member: discord.Member, *, reason: str = "No reason given") -> None:

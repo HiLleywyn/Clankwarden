@@ -43,6 +43,12 @@ GUILD_FIELDS: tuple[GuildField, ...] = (
     GuildField("clank_escape_wait_minutes", "number", "Reflection period (minutes)", "Mandatory reflection wait before an escape unlocks.", min=1, max=120),
     GuildField("scam_hunter_role", "discord_role", "Clanker hunter role", "Members of this role can report scammers in the hunter channel."),
     GuildField("scam_report_channel", "discord_channel", "Clanker hunter channel", "Channel where hunters post reports that auto-clank flagged users."),
+    GuildField("dehoist_enabled", "bool", "Smart dehoist enabled", "Scan members against this server's impersonation signals and act automatically."),
+    GuildField("dehoist_mode", "string", "Dehoist mode", "off, warn, rename, or rename_clank (rename the impersonator AND auto-clank them).", max_len=12),
+    GuildField("dehoist_floor_role", "discord_role", "Dehoist floor role", "Only members at or below this role are eligible; staff/trusted roles are never touched."),
+    GuildField("dehoist_log_channel", "discord_channel", "Dehoist log channel", "Where dehoist alerts post. Falls back to the Clanker log channel."),
+    GuildField("dehoist_triggers", "string", "Dehoist triggers", "Comma list of events that run the check: join, message, update.", max_len=40),
+    GuildField("dehoist_topics", "string", "Dehoist extra topics", "Optional comma list of extra topic keywords to seed the impersonation lexicon.", max_len=200),
 )
 
 FIELDS_BY_KEY: dict[str, GuildField] = {f.key: f for f in GUILD_FIELDS}

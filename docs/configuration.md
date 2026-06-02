@@ -9,7 +9,7 @@ service variables, on Auren via the settings UI generated from
 | Variable | What it is |
 |---|---|
 | `DISCORD_TOKEN` | Bot token from the Discord developer portal. |
-| `DATABASE_URL` | PostgreSQL DSN, e.g. `postgresql://user:pass@host:5432/clanksimus`. Migrations run on boot. |
+| `DATABASE_URL` | PostgreSQL DSN, e.g. `postgresql://user:pass@host:5432/clankwarden`. Migrations run on boot. |
 
 ## Core
 

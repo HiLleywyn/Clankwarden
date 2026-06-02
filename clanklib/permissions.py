@@ -60,8 +60,9 @@ FEATURES: tuple[FeaturePerm, ...] = (
     FeaturePerm(
         "moderation", "Moderation commands",
         ("kick_members", "ban_members", "moderate_members", "manage_messages",
-         "manage_channels"),
-        "Run ban/kick/timeout/purge/lock and the rest of the mod command set.",
+         "manage_channels", "manage_nicknames"),
+        "Run ban/kick/timeout/purge/lock plus the smart-dehoist rename of "
+        "impersonators, and the rest of the mod command set.",
     ),
     FeaturePerm(
         "setup", "Server setup (.setup)",

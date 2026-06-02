@@ -242,7 +242,7 @@ class SetupWizard(ModCog):
         me = guild.me
         staff_view = discord.PermissionOverwrite(view_channel=True)
         hide = discord.PermissionOverwrite(view_channel=False)
-        reason = f"Clanksimus .init by {view.ctx.author}"
+        reason = f"Clankwarden .init by {view.ctx.author}"
         sel = view.selected
 
         category = None
@@ -345,7 +345,7 @@ class SetupWizard(ModCog):
             keep_ids.update(c.id for c in keep_category.channels)
 
         deny = discord.PermissionOverwrite(view_channel=False)
-        reason = f"Clanksimus .init: lock Clanker out (by {view.ctx.author})"
+        reason = f"Clankwarden .init: lock Clanker out (by {view.ctx.author})"
 
         # Only touch categories and channels that aren't already synced to a
         # category we'll handle -- minimizes API calls on big servers.
@@ -393,7 +393,7 @@ class SetupWizard(ModCog):
             keep_ids.update(c.id for c in keep_category.channels)
 
         deny = discord.PermissionOverwrite(view_channel=False)
-        reason = f"Clanksimus .init: lock Clanker out (by {view.ctx.author})"
+        reason = f"Clankwarden .init: lock Clanker out (by {view.ctx.author})"
 
         # Only touch categories and channels that aren't already synced to a
         # category we'll handle -- minimizes API calls on big servers.
@@ -432,7 +432,7 @@ class SetupWizard(ModCog):
     async def revert(self, view: InitView) -> None:
         """Delete exactly what this run created and clear the settings it wrote."""
         guild = view.guild
-        reason = "Clanksimus .init revert"
+        reason = "Clankwarden .init revert"
         # Undo the Clanker lockdown on existing channels. If this run created the
         # Clanker role, deleting it below removes its overwrites for free; only a
         # reused role needs its overwrites stripped explicitly.

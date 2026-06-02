@@ -1,5 +1,44 @@
 # Changelog
 
+## [clankwarden] -- 2026-06-02
+
+### Changes
+- **Rebrand: Clanksimus Prime is now Clankwarden.** Manifest (`slug`/`name`/
+  `repo`), entrypoint, help/about/invite UI, API title and all docs updated.
+  The `.clank` command verb, the `clanker_*`/`clank_*` tables, migration files
+  and the `clanklib/` package are intentionally unchanged (no DB or import
+  churn). The GitHub repository rename to `clankwarden` is a separate, manual
+  step.
+- **New: Smart Dehoist (`cogs/dehoist.py`, `clanklib/dehoist.py`).** A
+  server-aware impersonation/hoist guard. It scans each guild's own signals
+  (role names, staff, channel names + topics, description) to learn the
+  impersonation handles that community actually attracts -- an investing server
+  breeds "Binance Support" / "Crypto Team" -- then on join / message / nick
+  change it dehoists (renames) and, by default, auto-clanks offenders **below a
+  configurable floor role** (staff and trusted roles are never touched). Unicode
+  normalization folds zalgo / fullwidth / cyrillic homoglyphs so "Binance" and
+  "Binаnce" match. Renames are paced through `BulkRunner` to avoid rate-limit
+  bans; every action is logged via `bot.modlog` and recorded to the new
+  `dehoist_events` table for analytics. Configurable per guild
+  (`DEHOIST_ENABLED`/`DEHOIST_MODE`/`DEHOIST_FLOOR_ROLE_ID`/`DEHOIST_LOG_CHANNEL_ID`
+  /`DEHOIST_TRIGGERS`/`DEHOIST_TOPICS`) and gated behind a new `manage_nicknames`
+  permission (invite value `1494917180662` -> `1495051398390`).
+- **Actionable Components V2 panels.** Dehoist alerts carry inline mod buttons
+  (Undo rename / Whitelist / Clank now); `/report` posts an actionable alert with
+  a Clank button; the config panel (`.dehoist`) is an interactive wizard with an
+  enable toggle, mode cycle, and role/channel selects.
+- **Some slash commands for in-the-moment actions.** `/report` (public),
+  `/dehoist <user>` (mod), and hybrid `/ban` `/kick` `/timeout` `/untimeout`.
+  Config/analytics/cluster/escape-room commands stay prefix-only.
+- **Friendlier `.clank` command names.** The cryptic `cl-` soup was renamed with
+  the old names kept as hidden aliases (nothing breaks): `clamp`->`lockdown`,
+  `clamp clear`->`lockdown confiscate`, `clamp clasp`->`lockdown muzzle`,
+  `clutch`->`dragnet`, `cloister`->`solitary`, `clad`->`lightsout`,
+  `clink`->`frisk`, `clarion`->`intercom`, `cline`->`snitchline`, plus
+  `add`->`book`, `remove`->`parole`, `list`->`cellblock`, `info`->`rapsheet`,
+  `evidence`->`receipts`, `scan`->`shakedown`, `sync`->`headcount`,
+  `tree`->`lineage`, `chart`->`tankboard`, `hunter`->`snitch`.
+
 ## [clanksimus-prime] -- 2026-06-02
 
 ### Changes

@@ -1,1 +1,1 @@
-"""Clanksimus Prime cogs."""
+"""Clankwarden cogs."""

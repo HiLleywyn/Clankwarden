@@ -34,7 +34,7 @@ def _build_panel(bot: Any, prefix: str, chosen_keys: list[str], author_id: int):
     chosen = selected_sections(chosen_keys)
     container = (
         Container(accent_color=C_INFO)
-        .text("## Clanksimus Prime")
+        .text("## Clankwarden")
         .text("One bot for moderation, audit logging, guided setup and the "
               ".clank account-containment system -- all free, all Components V2.")
         .separator()

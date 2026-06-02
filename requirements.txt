@@ -1,4 +1,4 @@
-# Clanksimus Prime runtime dependencies.
+# Clankwarden runtime dependencies.
 #
 # The shared bot framework (package name: bot-framework) is installed
 # separately by the Dockerfile from its git repo -- it provides core/,

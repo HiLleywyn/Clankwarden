@@ -1,6 +1,6 @@
 # Deployment Guide
 
-This is the complete, end-to-end guide to deploying **Clanksimus Prime**. It
+This is the complete, end-to-end guide to deploying **Clankwarden**. It
 covers all four pathways:
 
 1. [Prerequisites (every pathway)](#1-prerequisites)
@@ -12,7 +12,7 @@ covers all four pathways:
 7. [Upgrades, backups of the bot, and rollback](#7-upgrades-and-rollback)
 8. [Troubleshooting](#8-troubleshooting)
 
-Clanksimus Prime runs as **one process**: a Discord gateway client plus an
+Clankwarden runs as **one process**: a Discord gateway client plus an
 embedded HTTP server (REST API + `/health`). It needs exactly two external
 things to run: a **PostgreSQL database** and a **Discord bot token**. Redis is
 optional. It is built on the private `hilleywyn/framework` package, so every
@@ -29,7 +29,7 @@ install pulls that package from git.
 2. Click **Reset Token**, copy the value, and keep it somewhere safe. This is
    your `DISCORD_TOKEN`. **Treat it like a password** - anyone with it controls
    the bot.
-3. Scroll to **Privileged Gateway Intents** and enable both that Clanksimus
+3. Scroll to **Privileged Gateway Intents** and enable both that Clankwarden
    relies on:
    - **Server Members Intent** - needed for ban sync, member-scoped permission
      overwrites in backups/restores, and containment tracking.
@@ -42,7 +42,7 @@ install pulls that package from git.
 
 ### 1.2 Inviting the bot
 
-Clanksimus Prime asks for only the permissions it actually uses -- **never
+Clankwarden asks for only the permissions it actually uses -- **never
 Administrator**. The set is defined once in `clanklib/permissions.py` and drives
 the invite link, the `.setup` audit, and the Auren platform's Invite button:
 
@@ -55,6 +55,7 @@ the invite link, the `.setup` audit, and the Auren platform's Invite button:
   pull the contained user into it -- adding a member to a private, non-invitable
   thread requires Manage Threads)
 - Kick Members, Ban Members (the moderation command set)
+- Manage Nicknames (smart-dehoist renames impersonators -- "Binance Support" etc.)
 - Manage Channels (create containment channels, lock channels)
 - Create Public Threads (the `.setup` escape-room thread)
 - View Audit Log, Manage Server (attribute events / resolve join invites for logging)
@@ -62,7 +63,7 @@ the invite link, the `.setup` audit, and the Auren platform's Invite button:
 Build an invite URL (the `permissions` value is the union of the above):
 
 ```
-https://discord.com/oauth2/authorize?client_id=<CLIENT_ID>&permissions=1494917180662&scope=bot%20applications.commands
+https://discord.com/oauth2/authorize?client_id=<CLIENT_ID>&permissions=1495051398390&scope=bot%20applications.commands
 ```
 
 Once the bot is running you can also just type `.invite` (or `.about`) and it
@@ -102,8 +103,8 @@ Best for development and self-hosting on a VM you own.
 ### A.1 Clone and create a virtualenv
 
 ```bash
-git clone https://github.com/hilleywyn/clanksimus-prime
-cd clanksimus-prime
+git clone https://github.com/hilleywyn/clankwarden
+cd clankwarden
 python3.12 -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
 ```
@@ -124,10 +125,10 @@ pip install -r requirements.txt
 Quickest local Postgres:
 
 ```bash
-docker run -d --name clanksimus-db \
-  -e POSTGRES_PASSWORD=clank -e POSTGRES_DB=clanksimus \
+docker run -d --name clankwarden-db \
+  -e POSTGRES_PASSWORD=clank -e POSTGRES_DB=clankwarden \
   -p 5432:5432 postgres:16
-# DATABASE_URL=postgresql://postgres:clank@localhost:5432/clanksimus
+# DATABASE_URL=postgresql://postgres:clank@localhost:5432/clankwarden
 ```
 
 ### A.4 Configure
@@ -154,15 +155,15 @@ should return JSON.
 Run it under a process manager for persistence:
 
 ```ini
-# /etc/systemd/system/clanksimus.service
+# /etc/systemd/system/clankwarden.service
 [Unit]
-Description=Clanksimus Prime
+Description=Clankwarden
 After=network-online.target
 
 [Service]
-WorkingDirectory=/opt/clanksimus-prime
-EnvironmentFile=/opt/clanksimus-prime/.env
-ExecStart=/opt/clanksimus-prime/.venv/bin/python main.py
+WorkingDirectory=/opt/clankwarden
+EnvironmentFile=/opt/clankwarden/.env
+ExecStart=/opt/clankwarden/.venv/bin/python main.py
 Restart=on-failure
 RestartSec=5
 
@@ -171,8 +172,8 @@ WantedBy=multi-user.target
 ```
 
 ```bash
-sudo systemctl enable --now clanksimus
-journalctl -u clanksimus -f       # follow logs
+sudo systemctl enable --now clankwarden
+journalctl -u clankwarden -f       # follow logs
 ```
 
 ---
@@ -187,7 +188,7 @@ The image installs the framework (public) from git at build time and refreshes
 it automatically, so no build args are required:
 
 ```bash
-docker build -t clanksimus:latest .
+docker build -t clankwarden:latest .
 ```
 
 What the build does, in order: installs system deps -> installs the framework
@@ -200,11 +201,11 @@ code imports and the manifest is valid.
 Put your settings in `.env` (same file as local), then:
 
 ```bash
-docker run -d --name clanksimus \
+docker run -d --name clankwarden \
   --env-file .env \
   -p 8080:8080 \
   --restart unless-stopped \
-  clanksimus:latest
+  clankwarden:latest
 ```
 
 The container exposes `8080` and has a built-in `HEALTHCHECK` hitting
@@ -219,9 +220,9 @@ services:
     image: postgres:16
     environment:
       POSTGRES_PASSWORD: clank
-      POSTGRES_DB: clanksimus
+      POSTGRES_DB: clankwarden
     volumes:
-      - clanksimus-db:/var/lib/postgresql/data
+      - clankwarden-db:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -234,7 +235,7 @@ services:
         FRAMEWORK_REF: main
     environment:
       DISCORD_TOKEN: ${DISCORD_TOKEN}
-      DATABASE_URL: postgresql://postgres:clank@db:5432/clanksimus
+      DATABASE_URL: postgresql://postgres:clank@db:5432/clankwarden
       PREFIX: "."
       API_PORT: "8080"
     ports:
@@ -245,7 +246,7 @@ services:
     restart: unless-stopped
 
 volumes:
-  clanksimus-db:
+  clankwarden-db:
 ```
 
 ```bash
@@ -264,7 +265,7 @@ Best for a hosted deploy with managed Postgres and zero server maintenance.
 ### C.1 Create the project
 
 1. In [Railway](https://railway.app), **New Project -> Deploy from GitHub repo**
-   and pick `clanksimus-prime`. Railway reads `railway.toml` and builds with the
+   and pick `clankwarden`. Railway reads `railway.toml` and builds with the
    `Dockerfile`.
 
 ### C.2 Add PostgreSQL
@@ -311,7 +312,7 @@ variables (Railway passes matching variables as Docker build args):
 ## Pathway D - Auren (managed)
 
 Best when you want the Auren control plane to deploy, configure and manage
-the bot. Clanksimus ships a `auren.json` manifest, which is the deployment
+the bot. Clankwarden ships a `auren.json` manifest, which is the deployment
 contract Auren reads.
 
 ### D.1 What the manifest declares
@@ -334,7 +335,7 @@ python -m core.framework.manifest auren.json
 
 ### D.2 Register and deploy
 
-1. In Auren, add a **managed bot** pointing at the `clanksimus-prime` repo.
+1. In Auren, add a **managed bot** pointing at the `clankwarden` repo.
    Auren parses `auren.json` and shows the identity, the feature list, the
    credentials to collect and the settings UI.
 2. When prompted, paste `DISCORD_TOKEN`. Auren stores it in its vault (the
