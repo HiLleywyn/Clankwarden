@@ -76,7 +76,7 @@
         "id": "dehoist",
         "label": "Smart Dehoist",
         "fields": [
-          { "key": "DEHOIST_ENABLED", "type": "bool", "label": "Enable smart dehoist", "default": false, "help": "Scan members against this server's own impersonation signals and act automatically." },
+          { "key": "DEHOIST_ENABLED", "type": "boolean", "label": "Enable smart dehoist", "default": false, "help": "Scan members against this server's own impersonation signals and act automatically." },
           { "key": "DEHOIST_MODE", "type": "string", "label": "Action mode", "default": "rename_clank", "help": "off, warn, rename, or rename_clank (rename the impersonator AND auto-clank them)." },
           { "key": "DEHOIST_FLOOR_ROLE_ID", "type": "discord_role", "label": "Floor role", "help": "Only members whose highest role is at or below this are eligible; staff and trusted roles are never touched." },
           { "key": "DEHOIST_LOG_CHANNEL_ID", "type": "discord_channel", "label": "Dehoist log channel", "help": "Where dehoist alerts are posted. Falls back to the Clanker log channel." },
