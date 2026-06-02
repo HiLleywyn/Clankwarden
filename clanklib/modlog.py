@@ -126,6 +126,21 @@ class Category(Enum):
 # The canonical category set, for validation in commands.
 CATEGORY_NAMES: tuple[str, ...] = tuple(c.value for c in Category)
 
+# Categories that currently have a live event producer -- a gateway listener,
+# command, or detector actually emits them at runtime. The remaining categories
+# (command, ai, clanktank, analytics) expose convenience methods on ModLogger
+# but nothing calls them yet, so a routed channel for them would never receive a
+# single event. `.init` provisions a log channel only for producing categories
+# so an operator never ends up staring at channels that stay permanently empty.
+# Keep this in sync with the emitters in cogs/modlog.py and the anomaly detector.
+PRODUCING_CATEGORY_NAMES: tuple[str, ...] = (
+    "security", "moderation", "member", "message",
+    "role", "channel", "config", "infrastructure",
+)
+PRODUCING_CATEGORIES: tuple["Category", ...] = tuple(
+    Category(name) for name in PRODUCING_CATEGORY_NAMES
+)
+
 
 def _ignored_channel_ids(settings: dict) -> set[int]:
     """Parse the per-guild global ignore list into a set of channel ids.
