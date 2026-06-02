@@ -4824,6 +4824,7 @@ class Clanktank(commands.Cog):
     @guild_only
     async def clanker_group(self, ctx: DiscoContext, user: discord.Member = None,
                             *args: str) -> None:
+        """Clank a user: .clank @user [reason] [duration]; no user opens help."""
         # ``.clank @user [reason] [duration]`` clanks someone directly; bare
         # ``.clank`` (no user) opens the help hub. Release with ``.unclank``.
         if user is None:
@@ -4867,6 +4868,7 @@ class Clanktank(commands.Cog):
                                    duration="Optional: 30m, 2h, 7d (blank = permanent)")
     async def slash_clank(self, interaction: discord.Interaction, user: discord.Member,
                           reason: str = "", duration: str = "") -> None:
+        """Clank a member into the containment tank."""
         if not await self._slash_mod_or_hunter(interaction):
             return
         await interaction.response.defer(ephemeral=True)
@@ -4890,6 +4892,7 @@ class Clanktank(commands.Cog):
     @discord.app_commands.guild_only()
     @discord.app_commands.describe(user="Member to release")
     async def slash_unclank(self, interaction: discord.Interaction, user: discord.Member) -> None:
+        """Release a member from containment."""
         if not await self._slash_mod_or_hunter(interaction):
             return
         await interaction.response.defer(ephemeral=True)
@@ -4907,6 +4910,7 @@ class Clanktank(commands.Cog):
     @clanker_group.command(name="help")
     @guild_only
     async def clanker_help(self, ctx: DiscoContext) -> None:
+        """Show the containment command help."""
         active = sum(1 for _, gid in self._clanked if gid == ctx.guild.id)
         p = ctx.prefix or ","
         view = _ClankerHelpView(ctx.author.id, p, active)
@@ -5003,6 +5007,7 @@ class Clanktank(commands.Cog):
     @clanker_group.command(name="unclank", aliases=["remove", "release", "parole"])
     @guild_only
     async def clanker_remove(self, ctx: DiscoContext, user: discord.Member) -> None:
+        """Release a user from containment (alias: .unclank)."""
         if not ctx.author.guild_permissions.manage_roles:
             await ctx.reply_error("You need Manage Roles permission.")
             return
@@ -5058,6 +5063,7 @@ class Clanktank(commands.Cog):
     @clanker_group.command(name="info")
     @guild_only
     async def clanker_info(self, ctx: DiscoContext, user: discord.Member) -> None:
+        """Show a contained user's full record."""
         if not ctx.author.guild_permissions.manage_roles:
             await ctx.reply_error("You need Manage Roles permission.")
             return
@@ -5261,6 +5267,7 @@ class Clanktank(commands.Cog):
         user: discord.Member | None = None,
         limit: int = 10,
     ) -> None:
+        """Show recent containment audit-log events (optionally for one user)."""
         if not ctx.author.guild_permissions.manage_roles:
             await ctx.reply_error("You need Manage Roles permission.")
             return
@@ -5869,6 +5876,7 @@ class Clanktank(commands.Cog):
     @clanker_group.command(name="sync")
     @guild_only
     async def clanker_sync(self, ctx: DiscoContext) -> None:
+        """Reconcile the in-memory clanker cache with the database."""
         if not ctx.author.guild_permissions.manage_roles:
             await ctx.reply_error("You need Manage Roles permission.")
             return
@@ -7410,6 +7418,7 @@ class Clanktank(commands.Cog):
     @clanker_er.command(name="status")
     @guild_only
     async def clanker_er_status(self, ctx: DiscoContext) -> None:
+        """Show escape-room status across active clankers."""
         if not ctx.author.guild_permissions.manage_roles:
             await ctx.reply_error("You need Manage Roles permission.")
             return

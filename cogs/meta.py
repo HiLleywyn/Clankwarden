@@ -25,6 +25,7 @@ class Meta(BaseCog):
     @commands.hybrid_command(name="help", aliases=["commands", "h"],
                              description="Show the Clankwarden command help hub.")
     async def help_cmd(self, ctx: DiscoContext, *, topic: str = "") -> None:
+        """Open the command help hub."""
         # The dynamic help hub: one surface, a section multi-select, command
         # lists generated live from the command tree.
         from cogs._help_view import send_help
@@ -32,6 +33,7 @@ class Meta(BaseCog):
 
     @commands.command(name="about", aliases=["info"])
     async def about_cmd(self, ctx: DiscoContext) -> None:
+        """Show what Clankwarden is, with a link to add it."""
         guilds = len(self.bot.guilds)
         users = sum(g.member_count or 0 for g in self.bot.guilds)
         panel = (
@@ -50,6 +52,7 @@ class Meta(BaseCog):
 
     @commands.command(name="ping", aliases=["latency"])
     async def ping_cmd(self, ctx: DiscoContext) -> None:
+        """Show gateway latency and uptime."""
         latency = round(self.bot.latency * 1000)
         uptime = int(time.time() - _START)
         h, rem = divmod(uptime, 3600)
@@ -63,6 +66,7 @@ class Meta(BaseCog):
 
     @commands.command(name="invite")
     async def invite_cmd(self, ctx: DiscoContext) -> None:
+        """Get the bot's invite link (least-privilege, never Administrator)."""
         panel = (
             Container(accent_color=C_INFO)
             .text("## Invite Clankwarden")

@@ -340,6 +340,7 @@ class Moderation(GuildCog):
     @commands.command(name="warn")
     @commands.has_guild_permissions(moderate_members=True)
     async def warn(self, ctx: DiscoContext, member: discord.Member, *, reason: str = "No reason given") -> None:
+        """Warn a member and record it."""
         ok, why = self._hierarchy_ok(ctx, member)
         if not ok:
             await self._err(ctx, why)
@@ -368,6 +369,7 @@ class Moderation(GuildCog):
     @commands.command(name="warnings", aliases=["warns"])
     @commands.has_guild_permissions(moderate_members=True)
     async def warnings(self, ctx: DiscoContext, member: discord.Member) -> None:
+        """List a member's warnings."""
         if self.db is None:
             await self._err(ctx, "Warnings storage is unavailable.")
             return
@@ -397,6 +399,7 @@ class Moderation(GuildCog):
     @commands.command(name="delwarn", aliases=["unwarn"])
     @commands.has_guild_permissions(moderate_members=True)
     async def delwarn(self, ctx: DiscoContext, warning_id: int) -> None:
+        """Delete a warning by its id."""
         if self.db is None:
             await self._err(ctx, "Warnings storage is unavailable.")
             return

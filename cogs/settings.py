@@ -36,6 +36,7 @@ class Settings(ModCog):
     @commands.command(name="settings", aliases=["config", "cfg"])
     @commands.has_guild_permissions(manage_guild=True)
     async def settings_cmd(self, ctx: DiscoContext) -> None:
+        """Show every per-server setting."""
         s = await self.db.get_guild_settings(ctx.guild.id)
         p = _prefix(self.bot)
         g = ctx.guild
@@ -101,12 +102,14 @@ class Settings(ModCog):
     @commands.group(name="set", invoke_without_command=True)
     @commands.has_guild_permissions(manage_guild=True)
     async def set_grp(self, ctx: DiscoContext) -> None:
+        """Change a server option: .set <option> <value> (none to clear)."""
         await self.settings_cmd(ctx)
 
     # -- prefix ---------------------------------------------------------------
 
     @set_grp.command(name="prefix")
     async def set_prefix(self, ctx: DiscoContext, prefix: str) -> None:
+        """Set the command prefix (max 5 characters)."""
         if len(prefix) > 5:
             await send_v2(ctx, Container(accent_color=C_ERROR).text(
                 "Prefix must be 5 characters or fewer."))
@@ -120,46 +123,56 @@ class Settings(ModCog):
 
     @set_grp.command(name="log", aliases=["logchannel"])
     async def set_log(self, ctx: DiscoContext, channel: str) -> None:
+        """Set the general log channel."""
         await self._set_channel(ctx, "log_channel", channel, "Log channel")
 
     @set_grp.command(name="modlog", aliases=["modlogchannel"])
     async def set_modlog(self, ctx: DiscoContext, channel: str) -> None:
+        """Set the mod-log channel."""
         await self._set_channel(ctx, "mod_log_channel", channel, "Mod log channel")
 
     @set_grp.command(name="category", aliases=["clankercategory"])
     async def set_category(self, ctx: DiscoContext, category: str) -> None:
+        """Set the Clanktank category."""
         await self._set_channel(ctx, "clank_category", category, "Clanker category", category=True)
 
     @set_grp.command(name="tank", aliases=["containment", "clanktank", "clankerchannel"])
     async def set_containment(self, ctx: DiscoContext, channel: str) -> None:
+        """Set the Clanktank (containment) channel."""
         await self._set_channel(ctx, "clanktank_channel", channel, "Clanktank channel")
 
     @set_grp.command(name="clankerlog", aliases=["containmentlog", "clanktanklog", "tanklog"])
     async def set_containmentlog(self, ctx: DiscoContext, channel: str) -> None:
+        """Set the containment log channel."""
         await self._set_channel(ctx, "clanktank_log_channel", channel, "Clanker log channel")
 
     @set_grp.command(name="escapethread", aliases=["escape", "thread"])
     async def set_escapethread(self, ctx: DiscoContext, channel: str) -> None:
+        """Set the escape-room thread."""
         await self._set_channel(ctx, "clank_escape_thread", channel, "Escape-room thread", thread=True)
 
     @set_grp.command(name="hunterchannel", aliases=["reportchannel"])
     async def set_hunterchannel(self, ctx: DiscoContext, channel: str) -> None:
+        """Set the clanker-hunter report channel."""
         await self._set_channel(ctx, "scam_report_channel", channel, "Hunter channel")
 
     # -- roles ----------------------------------------------------------------
 
     @set_grp.command(name="clankerrole", aliases=["role"])
     async def set_clankerrole(self, ctx: DiscoContext, role: str) -> None:
+        """Set the Clanker (containment) role."""
         await self._set_role(ctx, "clanker_role", role, "Clanker role")
 
     @set_grp.command(name="hunterrole")
     async def set_hunterrole(self, ctx: DiscoContext, role: str) -> None:
+        """Set the clanker-hunter role."""
         await self._set_role(ctx, "scam_hunter_role", role, "Clanker hunter role")
 
     # -- numbers --------------------------------------------------------------
 
     @set_grp.command(name="reflection", aliases=["reflectionperiod", "wait"])
     async def set_reflection(self, ctx: DiscoContext, minutes: str) -> None:
+        """Set the escape-room reflection wait (1-120 minutes)."""
         if minutes.lower() in ("none", "off", "clear", "unset", "default"):
             await self.db.update_guild_setting(ctx.guild.id, "clank_escape_wait_minutes", None)
             await self._logcfg(ctx, "Reflection period", "default (5 min)")
@@ -183,11 +196,13 @@ class Settings(ModCog):
 
     @set_grp.command(name="autodelete", aliases=["autodel", "ad"])
     async def set_autodelete(self, ctx: DiscoContext, seconds: str) -> None:
+        """Auto-delete command/mod replies after N seconds (0 = keep)."""
         await self._set_seconds(ctx, "autodelete_replies", seconds,
                                 "Command-reply auto-delete", 3600)
 
     @set_grp.command(name="autodeleteinfo", aliases=["autodelinfo", "adinfo"])
     async def set_autodeleteinfo(self, ctx: DiscoContext, seconds: str) -> None:
+        """Auto-delete info panels (.help/.about) after N seconds (0 = keep)."""
         await self._set_seconds(ctx, "autodelete_info", seconds,
                                 "Info-panel auto-delete", 86400)
 

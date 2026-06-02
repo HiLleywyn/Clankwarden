@@ -356,6 +356,7 @@ class ModLog(ModCog):
     @commands.group(name="modlog", aliases=["mlog"], invoke_without_command=True)
     @commands.has_guild_permissions(manage_guild=True)
     async def modlog_grp(self, ctx: DiscoContext) -> None:
+        """Show the mod-log configuration."""
         s = await self.db.get_guild_settings(ctx.guild.id)
         routes = s.get("modlog_routes") or {}
         muted = s.get("modlog_muted") or []
@@ -392,6 +393,7 @@ class ModLog(ModCog):
 
     @modlog_grp.command(name="channel")
     async def modlog_channel(self, ctx: DiscoContext, channel: discord.TextChannel | None = None) -> None:
+        """Set the default mod-log channel."""
         new_id = channel.id if channel else None
         await self.db.update_guild_setting(ctx.guild.id, "mod_log_channel", new_id)
         await self.logger.config(
@@ -407,6 +409,7 @@ class ModLog(ModCog):
     @modlog_grp.command(name="route")
     async def modlog_route(self, ctx: DiscoContext, category: str,
                            channel: discord.TextChannel | None = None) -> None:
+        """Route a log category to a specific channel."""
         category = category.lower().strip()
         if category not in CATEGORY_NAMES:
             await send_v2(ctx, Container(accent_color=C_ERROR).text(
@@ -429,10 +432,12 @@ class ModLog(ModCog):
 
     @modlog_grp.command(name="mute")
     async def modlog_mute(self, ctx: DiscoContext, category: str) -> None:
+        """Stop logging a category."""
         await self._toggle_mute(ctx, category, mute=True)
 
     @modlog_grp.command(name="unmute")
     async def modlog_unmute(self, ctx: DiscoContext, category: str) -> None:
+        """Resume logging a category."""
         await self._toggle_mute(ctx, category, mute=False)
 
     async def _toggle_mute(self, ctx: DiscoContext, category: str, mute: bool) -> None:
@@ -454,6 +459,7 @@ class ModLog(ModCog):
 
     @modlog_grp.command(name="timeline", aliases=["history"])
     async def modlog_timeline(self, ctx: DiscoContext, member: discord.Member | None = None) -> None:
+        """Show recent logged events (optionally filtered)."""
         rows = await self.logger.timeline(
             ctx.guild.id, target_id=member.id if member else None, limit=15)
         if not rows:
@@ -535,6 +541,7 @@ class ModLog(ModCog):
 
     @modlog_grp.command(name="stats")
     async def modlog_stats(self, ctx: DiscoContext, hours: int = 24) -> None:
+        """Show event counts by category over the last N hours."""
         hours = max(1, min(720, hours))
         rows = await self.logger.stats(ctx.guild.id, hours=hours)
         if not rows:
@@ -555,6 +562,7 @@ class ModLog(ModCog):
 
     @modlog_grp.command(name="prune")
     async def modlog_prune(self, ctx: DiscoContext, days: int) -> None:
+        """Delete logged events older than N days."""
         if days < 1:
             await send_v2(ctx, Container(accent_color=C_ERROR).text(
                 "Give a number of days to keep (1 or more)."))
@@ -585,6 +593,7 @@ class ModLog(ModCog):
 
     @modlog_grp.group(name="alert", invoke_without_command=True)
     async def modlog_alert(self, ctx: DiscoContext) -> None:
+        """Show the alert (escalation) configuration."""
         s = await self.db.get_guild_settings(ctx.guild.id)
         role_id = s.get("modlog_alert_role")
         role = ctx.guild.get_role(int(role_id)) if role_id else None
@@ -598,12 +607,14 @@ class ModLog(ModCog):
 
     @modlog_alert.command(name="channel")
     async def modlog_alert_channel(self, ctx: DiscoContext, channel: discord.TextChannel | None = None) -> None:
+        """Set the channel for high-severity alerts."""
         await self.db.update_guild_setting(ctx.guild.id, "modlog_alert_channel",
                                            channel.id if channel else None)
         await self._ok(ctx, f"Alert channel {'set to ' + channel.mention if channel else 'cleared'}.")
 
     @modlog_alert.command(name="role")
     async def modlog_alert_role(self, ctx: DiscoContext, role: discord.Role | None = None) -> None:
+        """Set the role pinged on high-severity alerts."""
         await self.db.update_guild_setting(ctx.guild.id, "modlog_alert_role",
                                            role.id if role else None)
         await self._ok(ctx, f"Alert role {'set to ' + role.mention if role else 'cleared'}.")
@@ -633,6 +644,7 @@ class ModLog(ModCog):
 
     @modlog_grp.command(name="test")
     async def modlog_test(self, ctx: DiscoContext) -> None:
+        """Emit a test event to verify logging works."""
         await self.logger.emit(LogEvent(
             category=Category.INFRASTRUCTURE, event_type="modlog.test",
             guild_id=ctx.guild.id, severity=Severity.NOTICE, actor=ctx.author,
