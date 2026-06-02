@@ -33,13 +33,19 @@
   guild's own settings.
 
 ### Mod-log
-- **Global ignore list (new).** A per-server list of channels the mod log
-  excludes entirely: any event originating in an ignored channel is never posted
-  and never escalates, and message edits/deletes there are not even recorded (so
-  an ignored channel stays genuinely private). Manage it with
-  `.modlog ignore` (show), `.modlog ignore add #ch ...`,
-  `.modlog ignore remove #ch ...` and `.modlog ignore clear`; the
-  `.modlog` panel now lists the ignored channels.
+- **Global ignore list (new).** A per-server ignore list the mod log excludes
+  entirely -- ignored events are still recorded for the timeline but never
+  posted and never escalate. It now covers:
+  - **Bots** -- `.modlog ignore bots` toggles ignoring *every* bot (any event
+    whose actor or target is a bot), so the log stops being flooded by other
+    bots. `bots on` / `bots off` set it explicitly.
+  - **Users** -- `.modlog ignore @user` (ignored as actor or target).
+  - **Roles** -- `.modlog ignore @role` (any actor/target member with the role).
+  - **Channels** -- `.modlog ignore #channel` (message edits/deletes there are
+    not even recorded, so the channel stays private).
+  Mentions can be mixed (`.modlog ignore #spam @user @role`); `remove`/`rm`
+  un-ignore and `clear` wipes everything. The `.modlog` panel summarises what's
+  being ignored.
 
 ### Pre-deploy cleanup
 - **Plain command names (dropped the prison theme).** `.clank @user` now clanks

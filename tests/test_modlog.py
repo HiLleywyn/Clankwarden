@@ -102,6 +102,47 @@ def test_ignored_channel_ids_coerces_and_drops_junk() -> None:
     assert modlog._ignored_channel_ids({"modlog_ignored_channels": "nope"}) == set()
 
 
+def test_ignored_user_and_role_id_parsers() -> None:
+    assert modlog._ignored_user_ids({"modlog_ignored_users": ["7", 8]}) == {7, 8}
+    assert modlog._ignored_role_ids({"modlog_ignored_roles": [9]}) == {9}
+    assert modlog._ignored_user_ids({}) == set()
+    assert modlog._ignored_role_ids({}) == set()
+
+
+class _FakeRole:
+    def __init__(self, rid): self.id = rid
+
+
+class _FakeActor:
+    def __init__(self, *, bot=False, roles=()):
+        self.bot = bot
+        self.roles = [_FakeRole(r) for r in roles]
+
+
+def test_is_ignored_event_bots_users_roles_channels() -> None:
+    import asyncio
+    logger = modlog.ModLogger(bot=None)
+
+    def ev(**kw):
+        return LogEvent(category=Category.MEMBER, event_type="t", guild_id=1, **kw)
+
+    def ignored(event, settings) -> bool:
+        return asyncio.run(logger.is_ignored_event(event, settings))
+
+    # ignore-bots: a bot actor is suppressed, a human is not.
+    assert ignored(ev(actor=_FakeActor(bot=True)), {"modlog_ignore_bots": True}) is True
+    assert ignored(ev(actor=_FakeActor(bot=False)), {"modlog_ignore_bots": True}) is False
+    # nothing configured -> never ignored.
+    assert ignored(ev(actor=_FakeActor(bot=True)), {}) is False
+    # ignored user by id (actor or target).
+    assert ignored(ev(target=42), {"modlog_ignored_users": [42]}) is True
+    # ignored role: an actor carrying the role is suppressed.
+    assert ignored(ev(actor=_FakeActor(roles=[5, 6])), {"modlog_ignored_roles": [6]}) is True
+    assert ignored(ev(actor=_FakeActor(roles=[5])), {"modlog_ignored_roles": [6]}) is False
+    # ignored channel still works through the unified check.
+    assert ignored(ev(channel=99), {"modlog_ignored_channels": [99]}) is True
+
+
 def test_render_builds_a_layout_view() -> None:
     ev = LogEvent(category=Category.MODERATION, event_type="member.ban", guild_id=1,
                   severity=Severity.ALERT, target=12345,
