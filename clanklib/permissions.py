@@ -51,9 +51,11 @@ FEATURES: tuple[FeaturePerm, ...] = (
     FeaturePerm(
         "containment", "Containment (clank)",
         ("manage_roles", "manage_messages", "moderate_members", "ban_members",
-         "create_private_threads"),
-        "Apply the Clanker role, clean up messages, open the private "
-        "cloister review thread, and act on offenders.",
+         "create_private_threads", "manage_threads"),
+        "Apply the Clanker role, clean up messages, open the private cloister "
+        "review thread and pull the contained user into it, and act on "
+        "offenders. (Adding a member to a private, non-invitable thread needs "
+        "Manage Threads.)",
     ),
     FeaturePerm(
         "moderation", "Moderation commands",

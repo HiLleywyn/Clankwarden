@@ -51,7 +51,9 @@ the invite link, the `.setup` audit, and the Auren platform's Invite button:
   confirmation prompts, post chart images, and talk in threads)
 - Manage Roles (apply the Clanker containment role)
 - Manage Messages (clean up / purge), Moderate Members (timeout)
-- Create Private Threads (the `.clank` cloister review thread)
+- Create Private Threads + Manage Threads (open the `.clank` cloister thread and
+  pull the contained user into it -- adding a member to a private, non-invitable
+  thread requires Manage Threads)
 - Kick Members, Ban Members (the moderation command set)
 - Manage Channels (create containment channels, lock channels)
 - Create Public Threads (the `.setup` escape-room thread)
@@ -60,7 +62,7 @@ the invite link, the `.setup` audit, and the Auren platform's Invite button:
 Build an invite URL (the `permissions` value is the union of the above):
 
 ```
-https://discord.com/oauth2/authorize?client_id=<CLIENT_ID>&permissions=1477737311478&scope=bot%20applications.commands
+https://discord.com/oauth2/authorize?client_id=<CLIENT_ID>&permissions=1494917180662&scope=bot%20applications.commands
 ```
 
 Once the bot is running you can also just type `.invite` (or `.about`) and it
