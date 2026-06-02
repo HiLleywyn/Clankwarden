@@ -25,6 +25,9 @@ Channel routing per guild (read from ``guild_settings``):
 * ``modlog_muted``            -- a list of category names to never post (still
   persisted), so an operator can keep, say, ``message`` events out of the channel
   while retaining them for the timeline.
+* ``modlog_ignored_channels`` -- a global list of channel ids whose activity is
+  excluded from the log: any event originating in one of these channels is never
+  posted (and never escalates), regardless of category or routing.
 
 All ASCII; no embeds.
 """
@@ -122,6 +125,24 @@ class Category(Enum):
 
 # The canonical category set, for validation in commands.
 CATEGORY_NAMES: tuple[str, ...] = tuple(c.value for c in Category)
+
+
+def _ignored_channel_ids(settings: dict) -> set[int]:
+    """Parse the per-guild global ignore list into a set of channel ids.
+
+    The ``modlog_ignored_channels`` setting lives in the ``features`` JSONB, so
+    after a round-trip its ids may come back as ints or strings; coerce both and
+    silently drop anything non-numeric so a malformed entry can never raise."""
+    raw = settings.get("modlog_ignored_channels") or []
+    if not isinstance(raw, (list, tuple, set)):
+        return set()
+    out: set[int] = set()
+    for item in raw:
+        try:
+            out.add(int(item))
+        except (TypeError, ValueError):
+            continue
+    return out
 
 
 def _short_id() -> str:
@@ -384,6 +405,11 @@ class ModLogger:
     async def _dispatch(self, event: LogEvent) -> None:
         try:
             s = await self._guild_settings(event.guild_id)
+            # A channel on the global ignore list is excluded entirely: the event
+            # is still persisted (for the timeline + hash chain) but is never
+            # posted to the log and never escalates.
+            if event.channel_id is not None and event.channel_id in _ignored_channel_ids(s):
+                return
             incident = bool(s.get("modlog_incident"))
             # Incident mode forces every category through (nothing stays muted)
             # so the full picture is visible during an active situation.
@@ -478,6 +504,13 @@ class ModLogger:
             return await db.get_guild_settings(int(guild_id)) or {}
         except Exception:  # noqa: BLE001
             return {}
+
+    async def is_ignored_channel(self, guild_id: int, channel_id: Optional[int]) -> bool:
+        """Whether a channel is on the guild's global mod-log ignore list."""
+        if not channel_id:
+            return False
+        s = await self._guild_settings(guild_id)
+        return int(channel_id) in _ignored_channel_ids(s)
 
     async def _is_muted(self, guild_id: int, category: Category) -> bool:
         s = await self._guild_settings(guild_id)

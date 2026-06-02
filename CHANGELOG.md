@@ -2,6 +2,15 @@
 
 ## [clankwarden] -- 2026-06-02
 
+### Mod-log
+- **Global ignore list (new).** A per-server list of channels the mod log
+  excludes entirely: any event originating in an ignored channel is never posted
+  and never escalates, and message edits/deletes there are not even recorded (so
+  an ignored channel stays genuinely private). Manage it with
+  `.modlog ignore` (show), `.modlog ignore add #ch ...`,
+  `.modlog ignore remove #ch ...` and `.modlog ignore clear`; the
+  `.modlog` panel now lists the ignored channels.
+
 ### Pre-deploy cleanup
 - **Plain command names (dropped the prison theme).** `.clank @user` now clanks
   directly and `.unclank @user` releases (the `book`/`parole` subcommands are

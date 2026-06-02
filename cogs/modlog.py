@@ -16,7 +16,8 @@ import discord
 from discord.ext import commands
 
 from clanklib.modlog import (
-    CATEGORY_NAMES, Category, LogEvent, ModLogger, Severity, _epoch, _name_of,
+    CATEGORY_NAMES, Category, LogEvent, ModLogger, Severity, _epoch,
+    _ignored_channel_ids, _name_of,
 )
 from clanklib.permissions import ModCog
 from core.framework.components import Container, send_v2
@@ -294,20 +295,26 @@ class ModLog(ModCog):
 
     # -- message events -------------------------------------------------------
 
-    async def _is_log_channel(self, guild_id: int, channel_id: int) -> bool:
-        """Avoid logging activity in the mod-log channel itself (no feedback loop)."""
+    async def _skip_channel(self, guild_id: int, channel_id: int) -> bool:
+        """Whether message activity in this channel should not be recorded.
+
+        True for a mod-log channel itself (no feedback loop) or any channel on
+        the operator's global ignore list -- the latter never even persists the
+        message content, so an ignored channel is genuinely private."""
         try:
             s = await self.bot.db.get_guild_settings(guild_id)
         except Exception:  # noqa: BLE001
             return False
         watch = {s.get("mod_log_channel"), s.get("clanktank_log_channel"), s.get("log_channel")}
-        return channel_id in {int(x) for x in watch if x}
+        if channel_id in {int(x) for x in watch if x}:
+            return True
+        return channel_id in _ignored_channel_ids(s)
 
     @commands.Cog.listener()
     async def on_message_delete(self, message: discord.Message) -> None:
         if message.guild is None or message.author.bot:
             return
-        if await self._is_log_channel(message.guild.id, message.channel.id):
+        if await self._skip_channel(message.guild.id, message.channel.id):
             return
         if not (message.content or message.attachments):
             return
@@ -328,7 +335,7 @@ class ModLog(ModCog):
             return
         if before.content == after.content:
             return
-        if await self._is_log_channel(after.guild.id, after.channel.id):
+        if await self._skip_channel(after.guild.id, after.channel.id):
             return
         await self.logger.message(
             "message.edit", after.guild.id, actor=after.author, channel=after.channel,
@@ -345,6 +352,8 @@ class ModLog(ModCog):
         first = messages[0]
         if first.guild is None:
             return
+        if await self._skip_channel(first.guild.id, first.channel.id):
+            return
         await self.logger.message(
             "message.bulk_delete", first.guild.id, severity=Severity.WARNING,
             channel=first.channel,
@@ -360,12 +369,16 @@ class ModLog(ModCog):
         s = await self.db.get_guild_settings(ctx.guild.id)
         routes = s.get("modlog_routes") or {}
         muted = s.get("modlog_muted") or []
+        ignored = sorted(_ignored_channel_ids(s))
         rows = await self.logger.stats(ctx.guild.id, hours=24)
         stat_line = ", ".join(f"{r['category']}: {r['n']}" for r in rows) or "no events in 24h"
         route_lines = "\n".join(
             f"- `{cat}` -> {_chan(ctx.guild, cid)}" for cat, cid in routes.items()
         ) or "_none (all use the default channel)_"
         incident = "ON" if s.get("modlog_incident") else "OFF"
+        ignored_line = (
+            ", ".join(_chan(ctx.guild, cid) for cid in ignored) if ignored else "none"
+        )
         panel = (
             Container(accent_color=C_NAVY)
             .text("## Moderation Log")
@@ -373,6 +386,7 @@ class ModLog(ModCog):
                 f"**Default channel**  {_chan(ctx.guild, s.get('mod_log_channel'))}\n"
                 f"**Alert channel**  {_chan(ctx.guild, s.get('modlog_alert_channel'))}\n"
                 f"**Muted categories**  {', '.join(muted) if muted else 'none'}\n"
+                f"**Ignored channels**  {ignored_line}\n"
                 f"**Incident mode**  {incident}"
             )
             .separator()
@@ -383,6 +397,7 @@ class ModLog(ModCog):
             .text(
                 f"-# `{ctx.prefix}modlog channel #ch` set default  *  "
                 f"`route <category> #ch`  *  `mute/unmute <category>`  *  "
+                f"`ignore add/remove #ch`  *  "
                 f"`timeline [@user]`  *  `case <evt_id>`  *  `stats [hours]`  *  "
                 f"`prune <days>`  *  `verify`  *  `alert channel/role`  *  "
                 f"`incident on/off`  *  `test`\n"
@@ -429,6 +444,79 @@ class ModLog(ModCog):
         )
         await send_v2(ctx, Container(accent_color=C_SUCCESS).text(
             f"`{category}` -> {channel.mention if channel else 'default channel'}."))
+
+    @modlog_grp.group(name="ignore", aliases=["ignored", "exclude"], invoke_without_command=True)
+    async def modlog_ignore(self, ctx: DiscoContext) -> None:
+        """Show the global ignore list of channels excluded from logging."""
+        s = await self.db.get_guild_settings(ctx.guild.id)
+        ids = sorted(_ignored_channel_ids(s))
+        body = (
+            "\n".join(f"- {_chan(ctx.guild, cid)}" for cid in ids)
+            if ids else "_No channels are ignored. Activity everywhere is logged._"
+        )
+        await send_v2(ctx, Container(accent_color=C_INFO)
+                      .text("## Mod-log ignore list")
+                      .separator()
+                      .text(body)
+                      .separator()
+                      .text(
+            f"-# Events originating in these channels are never posted to the mod "
+            f"log -- message edits/deletes there are not even recorded.\n"
+            f"-# `{ctx.prefix}modlog ignore add #ch ...`  *  `remove #ch ...`  *  `clear`"))
+
+    @modlog_ignore.command(name="add", aliases=["+"])
+    async def modlog_ignore_add(self, ctx: DiscoContext, *channels: discord.TextChannel) -> None:
+        """Add one or more channels to the global ignore list."""
+        await self._ignore_mutate(ctx, channels, add=True)
+
+    @modlog_ignore.command(name="remove", aliases=["rm", "-", "delete", "del"])
+    async def modlog_ignore_remove(self, ctx: DiscoContext, *channels: discord.TextChannel) -> None:
+        """Remove one or more channels from the global ignore list."""
+        await self._ignore_mutate(ctx, channels, add=False)
+
+    @modlog_ignore.command(name="clear", aliases=["reset"])
+    async def modlog_ignore_clear(self, ctx: DiscoContext) -> None:
+        """Clear the global ignore list (resume logging everywhere)."""
+        s = await self.db.get_guild_settings(ctx.guild.id)
+        if not _ignored_channel_ids(s):
+            await send_v2(ctx, Container(accent_color=C_INFO).text(
+                "The ignore list is already empty."))
+            return
+        await self.db.update_guild_setting(ctx.guild.id, "modlog_ignored_channels", [])
+        await self.logger.config(
+            "config.modlog_ignore", ctx.guild.id, actor=ctx.author,
+            summary="Cleared the mod-log ignore list.")
+        await send_v2(ctx, Container(accent_color=C_SUCCESS).text(
+            "Ignore list cleared -- activity in every channel is logged again."))
+
+    async def _ignore_mutate(self, ctx: DiscoContext,
+                             channels: tuple[discord.TextChannel, ...], add: bool) -> None:
+        if not channels:
+            verb = "add" if add else "remove"
+            await send_v2(ctx, Container(accent_color=C_ERROR).text(
+                f"Give one or more channels, e.g. `{ctx.prefix}modlog ignore {verb} #channel`."))
+            return
+        s = await self.db.get_guild_settings(ctx.guild.id)
+        ids = _ignored_channel_ids(s)
+        before = set(ids)
+        for ch in channels:
+            if add:
+                ids.add(ch.id)
+            else:
+                ids.discard(ch.id)
+        if ids == before:
+            await send_v2(ctx, Container(accent_color=C_INFO).text(
+                "No change -- those channels were already "
+                + ("on the ignore list." if add else "not on the ignore list.")))
+            return
+        await self.db.update_guild_setting(ctx.guild.id, "modlog_ignored_channels", sorted(ids))
+        names = ", ".join(c.mention for c in channels)
+        await self.logger.config(
+            "config.modlog_ignore", ctx.guild.id, actor=ctx.author,
+            summary=f"{'Added to' if add else 'Removed from'} the mod-log ignore list: {names}.")
+        verb = "now ignored" if add else "no longer ignored"
+        await send_v2(ctx, Container(accent_color=C_SUCCESS).text(
+            f"{names} {verb}. {len(ids)} channel(s) on the ignore list."))
 
     @modlog_grp.command(name="mute")
     async def modlog_mute(self, ctx: DiscoContext, category: str) -> None:
