@@ -28,7 +28,7 @@ def create_app(bot: Any = None) -> FastAPI:
     # ``app.state.bot = self`` immediately after (see
     # ``FrameworkBot._ensure_api_server_started``). ``bot`` is therefore
     # optional; handlers read the live bot via ``app.state.bot``.
-    app = FastAPI(title="Clanksimus Prime API", version="2.0.0", docs_url="/api/docs")
+    app = FastAPI(title="Clankwarden API", version="2.0.0", docs_url="/api/docs")
     app.state.bot = bot
 
     @app.exception_handler(AppError)

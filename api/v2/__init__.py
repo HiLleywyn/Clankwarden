@@ -1,1 +1,1 @@
-"""Clanksimus Prime REST API, v2."""
+"""Clankwarden REST API, v2."""

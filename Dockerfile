@@ -1,4 +1,4 @@
-# Clanksimus Prime -- single-image deploy (Railway-ready).
+# Clankwarden -- single-image deploy (Railway-ready).
 #
 # Zero-config: the framework (hilleywyn/framework, public) is pulled from its
 # default branch and auto-refreshes on every build (see step 1). No build args,
@@ -8,7 +8,7 @@
 #   FRAMEWORK_REF  git ref of hilleywyn/framework to install (default: main)
 #
 # Example:
-#   docker build -t clanksimus .
+#   docker build -t clankwarden .
 FROM python:3.12-slim-bookworm AS base
 
 ENV PYTHONUNBUFFERED=1 \

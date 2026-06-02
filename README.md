@@ -1,4 +1,4 @@
-# Clanksimus Prime
+# Clankwarden
 
 A free, modern Discord **server-management bot** -- backups, templates,
 chatlogs, sync, import/export and settings -- plus the `.clank` account
@@ -26,8 +26,8 @@ UI, with **no premium tiers and no paywalls**. Built on the shared
 ## Quick start
 
 ```bash
-git clone https://github.com/hilleywyn/clanksimus-prime
-cd clanksimus-prime
+git clone https://github.com/hilleywyn/clankwarden
+cd clankwarden
 cp .env.example .env          # fill in DISCORD_TOKEN + DATABASE_URL
 # install the framework (private repo) + deps, then run:
 pip install "bot-framework @ git+https://github.com/hilleywyn/framework.git@main"
@@ -38,8 +38,8 @@ python main.py
 Or build the container (Railway-ready -- no build args needed):
 
 ```bash
-docker build -t clanksimus .
-docker run --env-file .env -p 8080:8080 clanksimus
+docker build -t clankwarden .
+docker run --env-file .env -p 8080:8080 clankwarden
 ```
 
 ## Documentation

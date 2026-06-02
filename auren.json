@@ -1,16 +1,16 @@
 {
   "manifest_version": "1",
   "bot": {
-    "slug": "clanksimus-prime",
-    "name": "Clanksimus Prime",
+    "slug": "clankwarden",
+    "name": "Clankwarden",
     "version": "1.0.0",
-    "description": "Scammer/bot account containment (.clank) plus a full moderation and audit-logging suite, rendered in Discord Components V2.",
+    "description": "Scammer/bot account containment (.clank) with smart, server-aware dehoisting, plus a full moderation and audit-logging suite, rendered in Discord Components V2.",
     "author": "HiLleywyn",
-    "repo": "hilleywyn/clanksimus-prime"
+    "repo": "hilleywyn/clankwarden"
   },
   "channels": ["discord"],
   "discord": {
-    "permissions": "1099780156598",
+    "permissions": "1495051398390",
     "scopes": ["bot", "applications.commands"]
   },
   "runtime": {
@@ -30,7 +30,8 @@
     "cogs.mod",
     "cogs.setupwiz",
     "cogs.settings",
-    "cogs.clank"
+    "cogs.clank",
+    "cogs.dehoist"
   ],
   "settings": {
     "groups": [
@@ -69,6 +70,18 @@
         "label": "Moderation logs",
         "fields": [
           { "key": "MOD_LOG_CHANNEL_ID", "type": "discord_channel", "label": "Mod log channel", "help": "Comprehensive moderation log for every tracked event." }
+        ]
+      },
+      {
+        "id": "dehoist",
+        "label": "Smart Dehoist",
+        "fields": [
+          { "key": "DEHOIST_ENABLED", "type": "boolean", "label": "Enable smart dehoist", "default": false, "help": "Scan members against this server's own impersonation signals and act automatically." },
+          { "key": "DEHOIST_MODE", "type": "string", "label": "Action mode", "default": "rename_clank", "help": "off, warn, rename, or rename_clank (rename the impersonator AND auto-clank them)." },
+          { "key": "DEHOIST_FLOOR_ROLE_ID", "type": "discord_role", "label": "Floor role", "help": "Only members whose highest role is at or below this are eligible; staff and trusted roles are never touched." },
+          { "key": "DEHOIST_LOG_CHANNEL_ID", "type": "discord_channel", "label": "Dehoist log channel", "help": "Where dehoist alerts are posted. Falls back to the Clanker log channel." },
+          { "key": "DEHOIST_TRIGGERS", "type": "string", "label": "Triggers", "default": "join,message,update", "help": "Comma list of events that run the check: join, message, update." },
+          { "key": "DEHOIST_TOPICS", "type": "string", "label": "Extra topics", "help": "Optional comma list of extra topic keywords to seed the impersonation lexicon (e.g. crypto, investing)." }
         ]
       }
     ]

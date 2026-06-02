@@ -1,1 +1,1 @@
-"""Clanksimus Prime support library (guild serialization, etc.)."""
+"""Clankwarden support library (guild serialization, etc.)."""

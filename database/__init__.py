@@ -1,4 +1,4 @@
-"""Clanksimus Prime data plane.
+"""Clankwarden data plane.
 
 The framework imports ``database.Database`` lazily and calls ``connect()``
 at boot. ``Database`` here is the slim :class:`PgDatabase` -- no economy.

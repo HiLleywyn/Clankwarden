@@ -3795,6 +3795,17 @@ class Clanktank(commands.Cog):
         except Exception:
             log.exception("clanktank: _purge_and_store_bg failed uid=%s", uid)
 
+    async def warden_contain(self, member: discord.Member, *, reason: str) -> None:
+        """Public entrypoint for the smart-dehoist cog (cogs/dehoist.py) to
+        auto-clank an impersonator through the exact same containment path as
+        every other clank -- the bot acts as the moderator."""
+        actor = member.guild.me
+        await self._do_clank(member, actor, reason, None, defer_purge=True)
+        await self._audit(
+            "auto_clank_dehoist", member.guild.id, user_id=member.id,
+            details={"reason": reason},
+        )
+
     async def _do_clank(
         self,
         member: discord.Member,
@@ -4827,7 +4838,7 @@ class Clanktank(commands.Cog):
         view = _ClankerHelpView(ctx.author.id, p, active)
         await ctx.reply(view=view, mention_author=False)
 
-    @clanker_group.command(name="add")
+    @clanker_group.command(name="book", aliases=["add", "lockup"])
     @guild_only
     async def clanker_add(
         self,
@@ -4917,7 +4928,7 @@ class Clanktank(commands.Cog):
             footer="Message purge running in background",
         ))
 
-    @clanker_group.command(name="remove")
+    @clanker_group.command(name="parole", aliases=["remove", "release"])
     @guild_only
     async def clanker_remove(self, ctx: DiscoContext, user: discord.Member) -> None:
         if not ctx.author.guild_permissions.manage_roles:
@@ -4945,7 +4956,7 @@ class Clanktank(commands.Cog):
         )
         await self._log_release(user.id, ctx.guild.id, final_rec, restored, ctx.author)
 
-    @clanker_group.command(name="list")
+    @clanker_group.command(name="cellblock", aliases=["list", "roster"])
     @guild_only
     async def clanker_list(self, ctx: DiscoContext) -> None:
         """List all contained users with sortable, paginated view."""
@@ -4972,7 +4983,7 @@ class Clanktank(commands.Cog):
         view = _ClankerListView(ctx.author.id, [dict(r) for r in rows], ctx.guild, "newest")
         await ctx.reply(view=view, mention_author=False)
 
-    @clanker_group.command(name="info")
+    @clanker_group.command(name="rapsheet", aliases=["info", "record"])
     @guild_only
     async def clanker_info(self, ctx: DiscoContext, user: discord.Member) -> None:
         if not ctx.author.guild_permissions.manage_roles:
@@ -5116,7 +5127,7 @@ class Clanktank(commands.Cog):
             mention_author=False,
         )
 
-    @clanker_group.command(name="evidence")
+    @clanker_group.command(name="receipts", aliases=["evidence"])
     @guild_only
     async def clanker_evidence(
         self,
@@ -5442,7 +5453,7 @@ class Clanktank(commands.Cog):
             except Exception:
                 pass
 
-    @clanker_group.command(name="scan")
+    @clanker_group.command(name="shakedown", aliases=["scan"])
     @guild_only
     async def clanker_scan(self, ctx: DiscoContext, *, args: str = "") -> None:
         """Scan clankers. No args: full scan. @user/ID: user scan. @baseRole @stopRole: role-band scan."""
@@ -5783,7 +5794,7 @@ class Clanktank(commands.Cog):
             ],
         ))
 
-    @clanker_group.command(name="sync")
+    @clanker_group.command(name="headcount", aliases=["sync"])
     @guild_only
     async def clanker_sync(self, ctx: DiscoContext) -> None:
         if not ctx.author.guild_permissions.manage_roles:
@@ -5861,7 +5872,7 @@ class Clanktank(commands.Cog):
         ))
 
 
-    @clanker_group.command(name="tree")
+    @clanker_group.command(name="lineage", aliases=["tree"])
     @guild_only
     async def clanker_tree(self, ctx: DiscoContext, user: discord.Member) -> None:
         """Show an ASCII connection tree rooted at this clanker."""
@@ -6339,7 +6350,7 @@ class Clanktank(commands.Cog):
 
     # -- cline: pattern listing -----------------------------------------------
 
-    @clanker_group.command(name="cline")
+    @clanker_group.command(name="snitchline", aliases=["cline"])
     @guild_only
     async def clanker_cline(
         self,
@@ -6384,7 +6395,7 @@ class Clanktank(commands.Cog):
 
     # -- chart command --------------------------------------------------------
 
-    @clanker_group.command(name="chart")
+    @clanker_group.command(name="tankboard", aliases=["chart", "stats"])
     @guild_only
     async def clanker_chart(self, ctx: DiscoContext) -> None:
         """Generate a clanktank analytics overview chart for this server."""
@@ -6542,7 +6553,7 @@ class Clanktank(commands.Cog):
 
     # -- hunter command group -------------------------------------------------
 
-    @clanker_group.group(name="hunter", invoke_without_command=True)
+    @clanker_group.group(name="snitch", aliases=["hunter"], invoke_without_command=True)
     @guild_only
     async def clanker_hunter_group(self, ctx: DiscoContext) -> None:
         """Show the clanker-hunter role and report-channel configuration."""
@@ -6660,7 +6671,7 @@ class Clanktank(commands.Cog):
 
     # -- clamp command group --------------------------------------------------
 
-    @clanker_group.group(name="clamp", invoke_without_command=True)
+    @clanker_group.group(name="lockdown", aliases=["clamp"], invoke_without_command=True)
     @guild_only
     async def clamp_group(self, ctx: DiscoContext) -> None:
         """Show and toggle Clanktank Clamp guard settings."""
@@ -6671,7 +6682,7 @@ class Clanktank(commands.Cog):
         view = _ClampSettingsView(ctx.author.id, s, ctx.guild.id, self.bot.db)
         await ctx.reply(view=view, mention_author=False)
 
-    @clamp_group.group(name="clear", invoke_without_command=True)
+    @clamp_group.group(name="confiscate", aliases=["clear"], invoke_without_command=True)
     @guild_only
     async def clamp_clear_group(self, ctx: DiscoContext) -> None:
         """Show clamp clear settings panel."""
@@ -6718,7 +6729,7 @@ class Clanktank(commands.Cog):
         await ctx.reply_success(f"Scam pattern detection is now **{'ON' if new else 'OFF'}**.")
         log.info("clanktank: clamp_clear_scams toggled=%s gid=%s actor=%s", new, ctx.guild.id, ctx.author.id)
 
-    @clamp_group.group(name="clasp", invoke_without_command=True)
+    @clamp_group.group(name="muzzle", aliases=["clasp"], invoke_without_command=True)
     @guild_only
     async def clasp_group(self, ctx: DiscoContext) -> None:
         """Show clasp auto-action settings panel."""
@@ -6779,7 +6790,7 @@ class Clanktank(commands.Cog):
             action, ctx.guild.id, ctx.author.id, guard_ids,
         )
 
-    @clamp_group.command(name="clutch")
+    @clamp_group.command(name="dragnet", aliases=["clutch"])
     @guild_only
     async def clamp_clutch(self, ctx: DiscoContext, max_clank: int | None = None) -> None:
         """Scan server members for scam signals; optionally clank up to <max> accounts."""
@@ -6877,7 +6888,7 @@ class Clanktank(commands.Cog):
             mention_author=False,
         )
 
-    @clamp_group.command(name="cloister")
+    @clamp_group.command(name="solitary", aliases=["cloister"])
     @guild_only
     async def clamp_cloister(self, ctx: DiscoContext, target: discord.Member) -> None:
         """Isolate a user in a private thread and delete their recent messages from this channel."""
@@ -6951,7 +6962,7 @@ class Clanktank(commands.Cog):
             mention_author=False,
         )
 
-    @clamp_group.command(name="clad")
+    @clamp_group.command(name="lightsout", aliases=["clad"])
     @guild_only
     async def clamp_clad(self, ctx: DiscoContext) -> None:
         """Mute all active clankers for 15 minutes and purge 100 messages from the tank channel."""
@@ -7028,7 +7039,7 @@ class Clanktank(commands.Cog):
             mention_author=False,
         )
 
-    @clamp_group.command(name="clink")
+    @clamp_group.command(name="frisk", aliases=["clink"])
     @guild_only
     async def clamp_clink(self, ctx: DiscoContext, target: discord.Member) -> None:
         """Run impersonation pattern analysis on a user (name signals, CCI, account age, evidence)."""
@@ -7109,7 +7120,7 @@ class Clanktank(commands.Cog):
             mention_author=False,
         )
 
-    @clanker_group.command(name="clarion")
+    @clanker_group.command(name="intercom", aliases=["clarion"])
     @guild_only
     async def clanker_clarion(self, ctx: DiscoContext, *, message: str) -> None:
         """Send an anonymous AI-reformulated message to the clanktank channel."""

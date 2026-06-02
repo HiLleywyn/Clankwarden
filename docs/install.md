@@ -1,6 +1,6 @@
-# Installing Clanksimus Prime
+# Installing Clankwarden
 
-Clanksimus Prime runs as a single process: a Discord bot plus an embedded REST
+Clankwarden runs as a single process: a Discord bot plus an embedded REST
 API / health endpoint. It needs **PostgreSQL** and a **Discord bot token**.
 It is built on the private `hilleywyn/framework` package, so installs pull that
 from git.
@@ -30,8 +30,8 @@ from git.
 ## 2. Local development
 
 ```bash
-git clone https://github.com/hilleywyn/clanksimus-prime
-cd clanksimus-prime
+git clone https://github.com/hilleywyn/clankwarden
+cd clankwarden
 python -m venv .venv && source .venv/bin/activate
 
 # Install the shared framework (private repo -- use a token or SSH):
@@ -46,9 +46,9 @@ Migrations run automatically on boot against `DATABASE_URL`. A local Postgres
 is the quickest path:
 
 ```bash
-docker run -d --name clanksimus-db -e POSTGRES_PASSWORD=clank \
-  -e POSTGRES_DB=clanksimus -p 5432:5432 postgres:16
-# DATABASE_URL=postgresql://postgres:clank@localhost:5432/clanksimus
+docker run -d --name clankwarden-db -e POSTGRES_PASSWORD=clank \
+  -e POSTGRES_DB=clankwarden -p 5432:5432 postgres:16
+# DATABASE_URL=postgresql://postgres:clank@localhost:5432/clankwarden
 ```
 
 Validate the manifest any time with:
@@ -65,9 +65,9 @@ the private repo passed as a build arg:
 ```bash
 docker build \
   --build-arg FRAMEWORK_REF=main \
-  -t clanksimus .
+  -t clankwarden .
 
-docker run --env-file .env -p 8080:8080 clanksimus
+docker run --env-file .env -p 8080:8080 clankwarden
 ```
 
 The build runs the test suite and fails if it's red. `/health` is exposed for
@@ -75,7 +75,7 @@ the container healthcheck.
 
 ## 4. Railway
 
-1. **New Project -> Deploy from GitHub repo** and pick `clanksimus-prime`.
+1. **New Project -> Deploy from GitHub repo** and pick `clankwarden`.
    Railway uses the `Dockerfile` (configured in `railway.toml`).
 2. Add a **PostgreSQL** plugin. Railway sets `DATABASE_URL` automatically; the
    data plane enables SSL for Railway hosts on its own.
@@ -94,7 +94,7 @@ the container healthcheck.
 
 ## 5. Auren
 
-Clanksimus ships a `auren.json` manifest, so the Auren control plane can
+Clankwarden ships a `auren.json` manifest, so the Auren control plane can
 deploy and manage it like any other managed bot:
 
 1. In Auren, add a managed bot pointing at this repo. Auren reads

@@ -1,7 +1,7 @@
 """database/guilds.py -- guild-scoped lookups the framework runtime expects.
 
 The framework's prefix/permission paths call ``db.guilds.get_bot_channels``
-and ``db.guilds.get_command_allowed_roles``. Clanksimus does not restrict
+and ``db.guilds.get_command_allowed_roles``. Clankwarden does not restrict
 commands by channel or role out of the box, so both return empty (meaning
 "no restriction"); the settings cog can layer real restrictions on later.
 """

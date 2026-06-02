@@ -40,6 +40,9 @@ SECTIONS: tuple[Section, ...] = (
     Section("containment", "Containment", "\U0001F6E1️",
             "The .clank account-containment system.",
             ("clank",)),
+    Section("dehoist", "Smart Dehoist", "\U0001F9F9",
+            "Server-aware impersonation/hoist detection and auto-containment.",
+            ("dehoist",)),
 )
 
 SECTIONS_BY_KEY: dict[str, Section] = {s.key: s for s in SECTIONS}

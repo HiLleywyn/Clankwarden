@@ -35,7 +35,7 @@ class Meta(BaseCog):
         users = sum(g.member_count or 0 for g in self.bot.guilds)
         panel = (
             Container(accent_color=C_INFO)
-            .text("## About Clanksimus Prime")
+            .text("## About Clankwarden")
             .text("A free, open moderation bot: ban, kick, timeout, warn and "
                   "purge, categorized mod-log audit trails, a guided setup "
                   "wizard, and the .clank account-containment system, all in "
@@ -64,7 +64,7 @@ class Meta(BaseCog):
     async def invite_cmd(self, ctx: DiscoContext) -> None:
         panel = (
             Container(accent_color=C_INFO)
-            .text("## Invite Clanksimus Prime")
+            .text("## Invite Clankwarden")
             .section("This link asks only for the permissions the bot actually "
                      "uses, not Administrator.",
                      accessory=Container.accessory_button("Invite", url=self._invite_url()))

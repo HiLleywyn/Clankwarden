@@ -1,4 +1,4 @@
-"""database/database.py -- Clanksimus Prime's slim data plane.
+"""database/database.py -- Clankwarden's slim data plane.
 
 The framework instantiates ``database.Database`` lazily (see
 ``core.framework.bot.FrameworkBot._resolve_db_factory``) and calls
@@ -28,7 +28,7 @@ _MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
 
 
 class PgDatabase:
-    """asyncpg-backed data plane for Clanksimus Prime."""
+    """asyncpg-backed data plane for Clankwarden."""
 
     def __init__(self, dsn: str) -> None:
         self._dsn = dsn
@@ -251,6 +251,12 @@ _GUILD_KEY_ALIASES: dict[str, str] = {
     "CLANKER_HUNTER_ROLE_ID": "scam_hunter_role",
     "CLANKER_HUNTER_CHANNEL_ID": "scam_report_channel",
     "MOD_LOG_CHANNEL_ID": "mod_log_channel",
+    "DEHOIST_ENABLED": "dehoist_enabled",
+    "DEHOIST_MODE": "dehoist_mode",
+    "DEHOIST_FLOOR_ROLE_ID": "dehoist_floor_role",
+    "DEHOIST_LOG_CHANNEL_ID": "dehoist_log_channel",
+    "DEHOIST_TRIGGERS": "dehoist_triggers",
+    "DEHOIST_TOPICS": "dehoist_topics",
 }
 
 
