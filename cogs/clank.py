@@ -1483,8 +1483,10 @@ class Clanktank(commands.Cog):
         self, uid: int, gid: int, old_level: int, new_level: int,
         direction: str, rust: int,
     ) -> None:
-        """Persist a depth change, toggle the Clankermax role at the L5 boundary,
-        route the event through the modlog, and drive the entertainment layer."""
+        """Persist a level change, toggle the Clankermax role at the L5 boundary,
+        route the event through the modlog, and drive the entertainment layer.
+        ``direction`` is ``"up"`` (escalated toward Clankermax) or ``"down"``
+        (cleared a level, closer to release)."""
         try:
             await self.bot.db.execute(
                 "UPDATE clanker_records SET level=$3, rust=$4, level_changed_at=now() "
@@ -1501,12 +1503,18 @@ class Clanktank(commands.Cog):
         elif old_level >= _CLANK_MAX_LEVEL and new_level < _CLANK_MAX_LEVEL:
             await self._set_clankermax(member, False)
         name = str(member) if member else f"<@{uid}>"
+        up = direction == "up"
+        summary = (
+            f"{name} failed Level {old_level} -> escalated to Level {new_level} (rust {rust})"
+            if up else
+            f"{name} cleared Level {old_level} -> stepped down to Level {new_level} (rust {rust})"
+        )
         try:
-            sev = (Severity.ALERT if (direction == "descend" and new_level >= _CLANK_MAX_LEVEL)
+            sev = (Severity.ALERT if (up and new_level >= _CLANK_MAX_LEVEL)
                    else Severity.NOTICE)
             await self.bot.modlog.clanktank(
-                f"clank_{direction}", gid, severity=sev, target=member or uid,
-                summary=f"{name} {direction}ed L{old_level} -> L{new_level} (rust {rust})",
+                f"clank_level_{direction}", gid, severity=sev, target=member or uid,
+                summary=summary,
                 metadata={"from_level": old_level, "to_level": new_level,
                           "rust": rust, "direction": direction},
             )
@@ -1531,8 +1539,9 @@ class Clanktank(commands.Cog):
         items: list[discord.ui.Item] = [
             discord.ui.TextDisplay("## The Clank Tank"),
             discord.ui.TextDisplay(
-                "-# Deeper = harder to escape. L5 = Clankermax. Clear each level to "
-                "rise toward the surface and go free. Fail and you sink."),
+                "-# Higher = harder to escape. **L5 = Clankermax** (max containment); "
+                "**L1** is closest to release. Clear your level to step down toward L1; "
+                "fail and you are escalated up toward L5."),
             discord.ui.Separator(spacing=discord.SeparatorSpacing.small),
         ]
         if not rows:
@@ -1587,8 +1596,10 @@ class Clanktank(commands.Cog):
     async def _tank_animate(
         self, gid: int, name: str, old_level: int, new_level: int, direction: str,
     ) -> None:
-        """Play a short descent/ascent animation on a transient message (never the
-        persistent escape view), capped + paced to stay well under rate limits."""
+        """Play a short level-change animation on a transient message (never the
+        persistent escape view), capped + paced to stay well under rate limits.
+        ``direction`` is ``"up"`` (failed -> escalated toward Clankermax) or
+        ``"down"`` (cleared a level -> closer to release)."""
         try:
             s = await self.bot.db.get_guild_settings(gid)
         except Exception:
@@ -1598,17 +1609,18 @@ class Clanktank(commands.Cog):
         ch = await self._tank_channel(gid)
         if ch is None:
             return
-        descend = direction == "descend"
-        flavor = random.choice(_ER_DESCEND_FLAVOR if descend else _ER_ASCEND_FLAVOR)
-        arrow = "v v v" if descend else "^ ^ ^"
+        up = direction == "up"
+        flavor = random.choice(_ER_UP_FLAVOR if up else _ER_DOWN_FLAVOR)
+        arrow = "^ ^ ^" if up else "v v v"
+        header = "ESCALATING" if up else "LEVEL CLEARED"
         step = 1 if new_level >= old_level else -1
         seq = list(range(old_level, new_level + step, step)) or [new_level]
         frames = [
             _V2Embed(discord.ui.Container(
-                discord.ui.TextDisplay(f"## {name} -- {direction.upper()}ING {arrow}"),
+                discord.ui.TextDisplay(f"## {name} -- {header} {arrow}"),
                 discord.ui.TextDisplay(_depth_gauge(cur)),
                 discord.ui.TextDisplay(f"-# {flavor}"),
-                accent_color=C_ERROR if descend else C_SUCCESS,
+                accent_color=C_ERROR if up else C_SUCCESS,
             ))
             for cur in seq[:4]
         ]
@@ -1628,7 +1640,7 @@ class Clanktank(commands.Cog):
     async def _import_legacy_clankers(
         self, guild: discord.Guild, *, reset_existing: bool = False,
     ) -> tuple[int, int]:
-        """Bring members wearing the Clanker role into the level system at depth L3.
+        """Bring members wearing the Clanker role into the level system at Level 3.
 
         Returns ``(imported, reset)``. Untracked members (an old bot clanked them,
         so we have no record) are registered at L3 with the default restore role as
@@ -1636,10 +1648,10 @@ class Clanktank(commands.Cog):
 
         ``reset_existing`` (the manual ``.clank import``) ALSO forces members who
         already have a record to L3 -- the "set everyone wearing @clanker to L3
-        right now" button -- and strips Clankermax if they were deeper. The
-        automatic startup sweep leaves existing records alone so a restart never
-        clobbers an actively-placed deep clanker. Does NOT auto-open escape rooms
-        (avoids mass spam) -- they get one on ``.clank escape`` or their next
+        right now" button -- and strips Clankermax if they were at a higher level.
+        The automatic startup sweep leaves existing records alone so a restart
+        never clobbers an actively-placed high-level clanker. Does NOT auto-open
+        escape rooms (avoids mass spam) -- they get one on ``.clank escape`` or next
         message."""
         role = await self._clanker_role(guild)
         if role is None:
@@ -3826,7 +3838,7 @@ class Clanktank(commands.Cog):
                 try:
                     await message.reply(
                         "run `.clank escape` to get the link to your escape room "
-                        "-- clear each level of the tank to rise toward the surface and be released. "
+                        "-- clear each level to step down toward Level 1 and be released. "
                         "check your DMs if you missed the original link.",
                         mention_author=False,
                         allowed_mentions=discord.AllowedMentions.none(),
@@ -4248,7 +4260,7 @@ class Clanktank(commands.Cog):
         try:
             await self.bot.modlog.clanktank(
                 "clank_placed", gid, target=member,
-                summary=f"{member} placed in the tank at depth L{entry_level} "
+                summary=f"{member} placed in the tank at Level {entry_level} "
                         f"({_LEVEL_NAMES[entry_level]})",
                 metadata={"entry_level": entry_level, "case_num": case_num},
             )
@@ -4622,7 +4634,7 @@ class Clanktank(commands.Cog):
             await self.bot.modlog.clanktank(
                 "clank_released", guild_id, severity=Severity.NOTICE,
                 target=_m or user_id,
-                summary="released from the Clank Tank -- reached the surface",
+                summary="released from the Clank Tank -- cleared every level",
                 metadata={"auto": auto, "final_level": rec.get("level") if rec else None,
                           "rust": rec.get("rust") if rec else None},
             )
@@ -4893,10 +4905,10 @@ class Clanktank(commands.Cog):
                 f"   *(Server Settings -> Privacy Settings -> Allow direct messages from server members)*\n"
                 f"2. Go to <#{tank_ch_id}> and run `.clank escape`\n"
                 f"3. You will be shown a link to your escape room\n"
-                f"4. You are at **depth L{use_level} of 5** ({_LEVEL_NAMES[use_level]}). "
-                f"Clear each level's trial to rise toward the surface\n"
-                f"5. Clear the final level and you are released automatically\n\n"
-                f"-# Careful: failing a level's test sinks you deeper into the tank.\n\n"
+                f"4. You are at **Level {use_level} of 5** ({_LEVEL_NAMES[use_level]}). "
+                f"Clear each level's trial to step DOWN toward Level 1\n"
+                f"5. Clear Level 1 and you are released automatically\n\n"
+                f"-# Careful: failing a level's test escalates you UP toward Level 5 (Clankermax).\n\n"
                 f"If you believe this is a mistake, reach out to a moderator directly.\n\n"
                 f"-# Keep your DMs open until you are released."
             )
@@ -4945,7 +4957,7 @@ class Clanktank(commands.Cog):
         try:
             ping_msg = await thread.send(
                 f"{member.mention} -- your containment proceedings have begun at "
-                f"**depth L{use_level} of 5**. Clear each level to rise toward the surface."
+                f"**Level {use_level} of 5**. Clear each level to step down toward release."
             )
             ping_msg_id = ping_msg.id
         except Exception:
@@ -5238,8 +5250,8 @@ class Clanktank(commands.Cog):
                             *args: str) -> None:
         """Clank a user: .clank @user [level 1-5] [reason] [duration]; no user opens help."""
         # ``.clank @user [level] [reason] [duration]`` clanks someone directly
-        # (optional leading 1-5 sets the containment depth; default 1). Bare
-        # ``.clank`` (no user) opens the help hub. Release with ``.unclank``.
+        # (optional leading 1-5 sets the containment level; default 3 = standard).
+        # Bare ``.clank`` (no user) opens the help hub. Release with ``.unclank``.
         if user is None:
             try:
                 from cogs._help_view import send_help
@@ -5279,7 +5291,7 @@ class Clanktank(commands.Cog):
     @discord.app_commands.guild_only()
     @discord.app_commands.describe(user="Member to clank", reason="Reason / context",
                                    duration="Optional: 30m, 2h, 7d (blank = permanent)",
-                                   level="Containment depth 1-5 (1=education, 5=Clankermax; blank=1)")
+                                   level="Containment level 1-5 (1=education, 5=Clankermax; blank=3)")
     async def slash_clank(self, interaction: discord.Interaction, user: discord.Member,
                           reason: str = "", duration: str = "", level: int = 0) -> None:
         """Clank a member into the containment tank."""
@@ -5290,7 +5302,7 @@ class Clanktank(commands.Cog):
             await interaction.followup.send("Cannot clank the bot itself.", ephemeral=True)
             return
         dur = _parse_duration(duration) if duration else None
-        entry_level = _clamp_level(level) if level else 1
+        entry_level = _clamp_level(level) if level else 3
         try:
             await self._do_clank(user, interaction.user, reason or None, dur,
                                  defer_purge=True, allow_booster=True, manual=True,
@@ -5301,7 +5313,7 @@ class Clanktank(commands.Cog):
                 "Failed to clank (check the bot's role hierarchy).", ephemeral=True)
             return
         await interaction.followup.send(
-            f"Clanked {user.mention} at depth **L{entry_level}** ({_LEVEL_NAMES[entry_level]})"
+            f"Clanked {user.mention} at **Level {entry_level}** ({_LEVEL_NAMES[entry_level]})"
             + (f" for `{duration}`." if dur else "."),
             ephemeral=True)
 
@@ -5349,8 +5361,8 @@ class Clanktank(commands.Cog):
         duration_s: int | None = None
         dur_raw: str | None = None
         reason_parts: list[str] = list(args)
-        # Optional leading depth: `.clank @user 5 reason...` (1-5).
-        entry_level = 1
+        # Optional leading level: `.clank @user 5 reason...` (1-5). Default L3.
+        entry_level = 3
         if reason_parts and reason_parts[0].isdigit() and 1 <= int(reason_parts[0]) <= 5:
             entry_level = int(reason_parts[0])
             reason_parts = reason_parts[1:]
@@ -5393,7 +5405,7 @@ class Clanktank(commands.Cog):
                 fields=[
                     ("User", f"{user.mention} ({user.id})"),
                     ("Moderator", ctx.author.mention),
-                    ("Depth", f"L{entry_level} ({_LEVEL_NAMES[entry_level]})"),
+                    ("Level", f"L{entry_level} ({_LEVEL_NAMES[entry_level]})"),
                     ("Duration", dur_label),
                     ("Reason", reason or "None provided"),
                     *([("Visit them", tank_ref)] if tank_ref else []),
@@ -5458,10 +5470,11 @@ class Clanktank(commands.Cog):
         )
         await self._log_release(user.id, ctx.guild.id, final_rec, restored, ctx.author)
 
-    @clanker_group.command(name="level", aliases=["depth", "sink"])
+    @clanker_group.command(name="level", aliases=["tier", "setlevel"])
     @guild_only
     async def clanker_level(self, ctx: DiscoContext, user: discord.Member, level: int) -> None:
-        """Move a contained user to a different depth: .clank level @user <1-5>."""
+        """Move a contained user to a different level: .clank level @user <1-5>
+        (1=lowest/education, 5=Clankermax)."""
         if not ctx.author.guild_permissions.manage_roles:
             await ctx.reply_error("You need Manage Roles permission.")
             return
@@ -5472,18 +5485,18 @@ class Clanktank(commands.Cog):
         rec = await self._get_record(user.id, ctx.guild.id)
         old_level = _clamp_level(rec.get("level") or 1) if rec else 1
         rust = int(rec.get("rust") or 0) if rec else 0
-        direction = "descend" if new_level > old_level else "ascend"
-        # Persist depth + Clankermax + modlog + board + animation.
+        direction = "up" if new_level > old_level else "down"
+        # Persist level + Clankermax + modlog + board + animation.
         await self._on_level_change(user.id, ctx.guild.id, old_level, new_level, direction, rust)
         # Reset the active trial to the new level's first station.
         await self._start_escape_room(user, force_new=True, send_intro=False, level=new_level)
         await ctx.reply(
             view=_v2(
-                "Depth Updated",
+                "Level Updated",
                 color=C_NAVY,
                 fields=[
                     ("User", f"{user.mention} ({user.id})"),
-                    ("Depth", f"L{old_level} -> L{new_level} ({_LEVEL_NAMES[new_level]})"),
+                    ("Level", f"L{old_level} -> L{new_level} ({_LEVEL_NAMES[new_level]})"),
                     ("Moderator", ctx.author.mention),
                 ],
             ),
@@ -5493,7 +5506,7 @@ class Clanktank(commands.Cog):
     @clanker_group.command(name="tank", aliases=["board"])
     @guild_only
     async def clanker_tank(self, ctx: DiscoContext) -> None:
-        """Show the live Tank Board: who is in the tank and how deep."""
+        """Show the live Tank Board: who is in the tank and at what level."""
         view = await self._render_tank_panel(ctx.guild.id)
         await ctx.reply(view=view, mention_author=False)
         # Also (re)post/refresh the persistent board in the tank channel.
@@ -5635,8 +5648,8 @@ class Clanktank(commands.Cog):
                 color=C_NAVY,
                 fields=[
                     ("Case #", f"#{_case_num:06d}" if _case_num else "unassigned"),
-                    ("Depth", f"L{_lvl} ({_LEVEL_NAMES[_lvl]})  {_depth_ladder(_lvl)}"),
-                    ("Entry depth", f"L{_entry} ({_LEVEL_NAMES[_entry]})"),
+                    ("Level", f"L{_lvl} ({_LEVEL_NAMES[_lvl]})  {_depth_ladder(_lvl)}"),
+                    ("Entry level", f"L{_entry} ({_LEVEL_NAMES[_entry]})"),
                     ("Rust", f"{_rust}/{_RUST_MAX}"),
                     ("Clankermax", _has_max),
                     ("Account age", _age_str(user.created_at) if user.created_at else "?"),
@@ -5695,7 +5708,7 @@ class Clanktank(commands.Cog):
             _er_stations = _level_stations(er_level)
             er_status = (
                 f"L{er_level} cleared" if er_step >= len(_er_stations)
-                else f"Depth L{er_level} -- Station {er_step + 1}/{len(_er_stations)}"
+                else f"Level {er_level} -- Station {er_step + 1}/{len(_er_stations)}"
             )
         await ctx.reply(
             view=_v2(
@@ -7847,7 +7860,7 @@ class Clanktank(commands.Cog):
         _notice = await ctx.reply(
             view=_v2(
                 color=C_INFO,
-                desc="run `.clank escape` to get the link to your escape room -- clear each level of the tank to rise toward the surface and be released. check your DMs if you missed the original link.",
+                desc="run `.clank escape` to get the link to your escape room -- clear each level to step down toward Level 1 and be released. check your DMs if you missed the original link.",
             ),
             mention_author=False,
             no_autodelete=True,
@@ -8054,7 +8067,7 @@ class Clanktank(commands.Cog):
             station = f"L{level} CLEARED"
         else:
             _key = _stations[step]
-            station = (f"Depth L{level} ({_LEVEL_NAMES[level]}) -- Station {step + 1}/{len(_stations)}: "
+            station = (f"Level {level} ({_LEVEL_NAMES[level]}) -- Station {step + 1}/{len(_stations)}: "
                        f"{_STATION_DISPLAY_NAMES.get(_key, _key.upper())}")
         started = row.get("started_at")
         step_started = row.get("step_started_at")
@@ -8884,11 +8897,12 @@ _ER_WRONG_MATH: tuple[str, ...] = (
 
 
 # -- 5-level containment model -------------------------------------------------
-# A clanker is placed at a depth (1=shallow education .. 5=Clankermax). Each level
-# is a trial built from the station builders below; deeper levels stack more
-# stations and a longer reflection wait. Passing a level's last station rises one
-# level toward the surface (clearing L1 == release); failing a level's gate sinks
-# one level deeper (toward L5) and accrues rust, which lengthens deeper trials.
+# A clanker is placed at a level (1=lowest, education .. 5=highest, Clankermax)
+# matching their threat. Each level is a trial built from the station builders
+# below; higher levels stack more stations and a longer reflection wait. Clearing
+# a level's last station steps them DOWN one level toward release (clearing L1 ==
+# released); failing a level's gate escalates them UP one level (toward L5,
+# Clankermax) and accrues rust, which lengthens higher-level trials.
 _CLANK_MAX_LEVEL = 5
 _RUST_MAX = 10  # rust meter scale for the tank board
 
@@ -8904,7 +8918,7 @@ _LEVEL_NAMES: dict[int, str] = {
     1: "ORIENTATION",
     2: "VERIFICATION",
     3: "STANDARD CONTAINMENT",
-    4: "DEEP CONTAINMENT",
+    4: "HEIGHTENED CONTAINMENT",
     5: "CLANKERMAX",
 }
 
@@ -8933,17 +8947,19 @@ _ER_STATION_HINTS: dict[str, str] = {
     "dms": "-- turn off your DMs, then click **VERIFY DMs ARE OFF**.",
 }
 
-_ER_DESCEND_FLAVOR: tuple[str, ...] = (
-    "The floor gives way. You sink a level deeper into the tank. Rust creeps in.",
-    "WRONG. The hydraulics groan and you drop a level. The water is colder down here.",
-    "Containment tightens. You are pulled down toward Clankermax.",
-    "The Tank does not forgive. Down you go -- more rust, more time.",
+# Flavor for an escalation (failed a gate -> bumped UP toward Clankermax).
+_ER_UP_FLAVOR: tuple[str, ...] = (
+    "WRONG. The Tank escalates you a level higher toward Clankermax. Rust creeps in.",
+    "Containment tightens. You are bumped UP a level. The locks are heavier here.",
+    "Failure noted. You climb the wrong way -- one level closer to Clankermax.",
+    "The Tank does not forgive. UP you go -- more rust, more time.",
 )
-_ER_ASCEND_FLAVOR: tuple[str, ...] = (
-    "A hatch opens above. You rise one level toward the surface.",
-    "Cleared. The water drains and you float upward. Daylight is closer.",
-    "The Tank loosens its grip. You ascend one level.",
-    "Progress. You climb toward freedom, rust flaking off as you go.",
+# Flavor for clearing a level (-> step DOWN one level toward release).
+_ER_DOWN_FLAVOR: tuple[str, ...] = (
+    "Cleared. You step DOWN a level, one step closer to release.",
+    "A lock disengages. You drop a level toward freedom.",
+    "The Tank loosens its grip -- down a level you go.",
+    "Progress. One level lower, rust flaking off as you go.",
 )
 
 _ER_EDU_QUESTION = (
@@ -8970,7 +8986,7 @@ def _level_stations(level: object) -> tuple[str, ...]:
 
 
 def _reflect_wait(base_minutes: int, level: int, rust: int) -> int:
-    """Reflection wait for a level: deeper levels reflect longer, rust adds on
+    """Reflection wait for a level: higher levels reflect longer, rust adds on
     top. Clamped to 1..120 so a clanker can never be soft-locked behind a wait."""
     return max(1, min(120, int(base_minutes) * _clamp_level(level) + int(rust)))
 
@@ -8979,27 +8995,29 @@ def _er_hint(level: int, step: int) -> str:
     """The per-station hint line shown above a clanker's escape view."""
     stations = _level_stations(level)
     if step >= len(stations):
-        return f"-# **Depth L{_clamp_level(level)} cleared** -- you are rising toward the surface."
+        return f"-# **Level {_clamp_level(level)} cleared** -- stepping down toward release."
     key = stations[step]
     tail = _ER_STATION_HINTS.get(key, "-- follow the instructions in the panel above.")
-    return f"-# **Depth L{_clamp_level(level)}/5 -- Station {step + 1}/{len(stations)}** {tail}"
+    return f"-# **Level {_clamp_level(level)}/5 -- Station {step + 1}/{len(stations)}** {tail}"
 
 
 def _depth_ladder(level: int) -> str:
-    """Compact one-line depth indicator: surface on the left, floor on the right."""
+    """Compact one-line level indicator: L1 (release) on the left, L5 (Clankermax)
+    on the right, with the current level bracketed."""
     level = _clamp_level(level)
     cells = [f"[{lv}]" if lv == level else str(lv) for lv in range(1, _CLANK_MAX_LEVEL + 1)]
-    return "Surface " + "-".join(cells) + " Floor"
+    return "release <- " + "-".join(cells) + " -> Clankermax"
 
 
 def _depth_gauge(level: int) -> str:
-    """A vertical depth gauge for the tank board / animation frames."""
+    """A vertical level gauge (L5 Clankermax at the top, L1/release at the bottom)
+    for the tank board / animation frames."""
     level = _clamp_level(level)
-    lines = ["```", "===== SURFACE / FREEDOM ====="]
-    for lv in range(1, _CLANK_MAX_LEVEL + 1):
+    lines = ["```", "===== L5 CLANKERMAX (max containment) ====="]
+    for lv in range(_CLANK_MAX_LEVEL, 0, -1):
         tag = _LEVEL_NAMES[lv]
         lines.append(f"  L{lv} {tag}  <<< HERE" if lv == level else f"  L{lv} {tag}")
-    lines.append("======= THE FLOOR (rust) =======")
+    lines.append("======= L1 -> RELEASE =======")
     lines.append("```")
     return "\n".join(lines)
 
@@ -9083,7 +9101,7 @@ class _EscapeRoomView(discord.ui.LayoutView):
         if self._step >= len(stations):
             return discord.ui.TextDisplay(
                 f"## {title}\n"
-                f"-# Case #{self._case:06d} -- {self._name} -- **DEPTH L{lvl} CLEARED**\n"
+                f"-# Case #{self._case:06d} -- {self._name} -- **LEVEL {lvl} CLEARED**\n"
                 f"-# {_depth_ladder(lvl)}"
             )
         key = stations[self._step]
@@ -9091,7 +9109,7 @@ class _EscapeRoomView(discord.ui.LayoutView):
         return discord.ui.TextDisplay(
             f"## {title}\n"
             f"-# Case #{self._case:06d} -- {self._name} -- "
-            f"Depth **L{lvl}/5** ({_LEVEL_NAMES[lvl]}) -- "
+            f"**Level {lvl}/5** ({_LEVEL_NAMES[lvl]}) -- "
             f"Station {self._step + 1}/{len(stations)}: **{sname}**\n"
             f"-# {_depth_ladder(lvl)}"
         )
@@ -9125,9 +9143,9 @@ class _EscapeRoomView(discord.ui.LayoutView):
         rows: list[discord.ui.Item] = [
             self._header(), self._sep(),
             discord.ui.TextDisplay(
-                "**ORIENTATION -- THE SHALLOW END**\n\n"
-                f"You are in the shallowest part of the {srv} Clank Tank. You are most likely "
-                "not a scammer -- you just had not learned the rules yet. So here they are.\n\n"
+                "**LEVEL 1 -- ORIENTATION (the lowest tier)**\n\n"
+                f"You are at Level 1 of the {srv} Clank Tank, the lowest tier. You are most "
+                "likely not a scammer -- you just had not learned the rules yet. So here they are.\n\n"
                 "**Do**\n"
                 "- Be kind. Talk in the channels, not in people's DMs uninvited.\n"
                 "- Ask staff if you are unsure about something.\n"
@@ -9168,10 +9186,11 @@ class _EscapeRoomView(discord.ui.LayoutView):
             fails = int(self._data.get("edu_fails", 0)) + 1
             if fails >= 3:
                 self._data = {k: v for k, v in self._data.items() if k != "edu_fails"}
-                await self._descend(interaction)
+                await self._level_up(interaction)
                 try:
                     await interaction.followup.send(
-                        "That is the answer a clanker would pick. Deeper into the tank you go.",
+                        "That is the answer a clanker would pick. The Tank escalates you "
+                        "a level higher.",
                         ephemeral=True,
                     )
                 except Exception:
@@ -9181,7 +9200,7 @@ class _EscapeRoomView(discord.ui.LayoutView):
             await self._cog._er_save(self._uid, self._gid, step_data=self._data, level=self._level)
             await interaction.response.send_message(
                 f"Not quite -- re-read the **Do / Do not** list above. "
-                f"({3 - fails} attempt(s) left before you sink)",
+                f"({3 - fails} attempt(s) left before you escalate a level)",
                 ephemeral=True,
             )
         return _cb
@@ -9206,9 +9225,10 @@ class _EscapeRoomView(discord.ui.LayoutView):
                 "This is not personal. Well. It is a little personal.\n\n"
                 "You now have the opportunity to demonstrate that you are a real human being "
                 "and not an automated crypto wealth redistribution entity. "
+                f"You are at **Level {self._level} of 5** ({_LEVEL_NAMES[self._level]}). "
                 f"This level's trial has **{len(self._stations())} station(s)**. "
-                "Clear them to rise toward the surface. Fail one and you sink deeper. "
-                "We are sorry about that.\n\n"
+                "Clear them to step DOWN toward Level 1 and release. Fail one and you "
+                "are escalated UP toward Level 5 (Clankermax). We are sorry about that.\n\n"
                 "**Keep your DMs open** for the duration of this process.\n"
                 "At the final station you will be required to **turn your DMs off** as a security measure. "
                 "This is mandatory. You cannot be released without completing it.\n\n"
@@ -9311,16 +9331,16 @@ class _EscapeRoomView(discord.ui.LayoutView):
             return
         fails = int(self._data.get("math_fails", 0)) + 1
         if fails >= 3:
-            # Math is the canonical gate -- three strikes sinks them a level deeper.
+            # Math is the canonical gate -- three strikes escalates them a level.
             self._data = {k: v for k, v in self._data.items() if k != "math_fails"}
             try:
                 await interaction.channel.send(  # type: ignore[union-attr]
                     f"{self._name}: three wrong answers. "
-                    "The Tank does not do extra credit. **Sinking deeper.**"
+                    "The Tank does not do extra credit. **Escalating a level.**"
                 )
             except Exception:
                 pass
-            await self._descend(interaction)
+            await self._level_up(interaction)
             return
         self._data = {**self._data, "math_fails": fails}
         self._rebuild()
@@ -9633,7 +9653,7 @@ class _EscapeRoomView(discord.ui.LayoutView):
             discord.ui.TextDisplay(
                 "**PROCEEDINGS COMPLETE**\n\n"
                 f"Congratulations, {self._name}.\n\n"
-                "You have climbed all the way to the surface of the Clank Tank. "
+                "You have cleared every level of the Clank Tank, all the way down to release. "
                 "You have been certified as **Probably Human**.\n\n"
                 "Your roles are being restored. You are free.\n\n"
                 "Your DMs are off -- keep them that way. "
@@ -9684,19 +9704,19 @@ class _EscapeRoomView(discord.ui.LayoutView):
                     self._cog._schedule_station4_refresh(self._uid, self._gid, wait_until))
 
     async def _pass(self, interaction: discord.Interaction, next_data: dict | None = None) -> None:
-        """Pass the current station: advance within the level, or ascend if it was
-        the level's last station."""
+        """Pass the current station: advance within the level, or step down a level
+        (toward release) if it was the level's last station."""
         nd = dict(self._data) if next_data is None else next_data
         if self._step + 1 >= len(self._stations()):
-            await self._ascend(interaction, nd)
+            await self._level_down(interaction, nd)
         else:
             await self._goto(interaction, self._step + 1, nd)
 
-    async def _ascend(self, interaction: discord.Interaction, next_data: dict | None = None) -> None:
-        """Level cleared. Rise one level toward the surface; clearing L1 releases."""
+    async def _level_down(self, interaction: discord.Interaction, next_data: dict | None = None) -> None:
+        """Level cleared -- step DOWN one level toward release; clearing L1 releases."""
         nd = dict(self._data) if next_data is None else next_data
         if self._level <= 1:
-            # Surface reached -- show the release panel and auto-release.
+            # Lowest level cleared -- show the release panel and auto-release.
             self._step = len(self._stations())
             self._data = self._carry(nd)
             self._rebuild()
@@ -9714,10 +9734,11 @@ class _EscapeRoomView(discord.ui.LayoutView):
         await self._cog._er_save(self._uid, self._gid, step=0, step_data=keep, level=new_level)
         asyncio.ensure_future(self._cog._er_update_hint(self._uid, self._gid, new_level, 0))
         asyncio.ensure_future(self._cog._on_level_change(
-            self._uid, self._gid, old_level, new_level, "ascend", int(keep.get("rust", 0))))
+            self._uid, self._gid, old_level, new_level, "down", int(keep.get("rust", 0))))
 
-    async def _descend(self, interaction: discord.Interaction) -> None:
-        """Failed a level's gate. Sink one level deeper (capped at L5) and rust++."""
+    async def _level_up(self, interaction: discord.Interaction) -> None:
+        """Failed a level's gate -- escalate UP one level (capped at L5/Clankermax)
+        and rust++."""
         old_level = self._level
         new_level = min(_CLANK_MAX_LEVEL, old_level + 1)
         rust = int(self._data.get("rust", 0)) + 1
@@ -9731,7 +9752,7 @@ class _EscapeRoomView(discord.ui.LayoutView):
         await self._cog._er_save(self._uid, self._gid, step=0, step_data=keep, level=new_level)
         asyncio.ensure_future(self._cog._er_update_hint(self._uid, self._gid, new_level, 0))
         asyncio.ensure_future(self._cog._on_level_change(
-            self._uid, self._gid, old_level, new_level, "descend", rust))
+            self._uid, self._gid, old_level, new_level, "up", rust))
 
 
 async def setup(bot: Discoin) -> None:
