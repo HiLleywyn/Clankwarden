@@ -27,9 +27,12 @@
   animations play in the tank channel on each level change. Toggle with
   `CLANK_TANK_BOARD`. Level changes also route through the mod-log
   (`clanktank` category: placed / ascend / descend / released).
-- **Legacy clanker import.** Members already wearing the Clanker role from a
-  previous bot are adopted into the system at **L3** on startup (and via
-  `.clank import`). They have no stored roles, so a configurable default role
+- **Every current clanker starts at L3.** The 0304 migration backfills all
+  existing containment records to depth **L3** (STANDARD CONTAINMENT), and
+  members already wearing the Clanker role from a previous bot are adopted into
+  the system at **L3** on startup (and via `.clank import`). New manual clanks
+  still default to L1. Legacy imports have no stored roles, so a configurable
+  default role
   (`CLANK_DEFAULT_ROLE_ID`, falling back to a role named User/Member) is
   registered as their restore set -- handed back only when they are unclanked.
 - `.clank info` now shows depth, entry depth, rust, and Clankermax status.
