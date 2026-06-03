@@ -21,8 +21,14 @@ from clanklib.settings import prefix as _prefix
 def _chan(guild: discord.Guild, cid) -> str:
     if not cid:
         return "_not set_"
-    ch = guild.get_channel(int(cid))
-    return ch.mention if ch else f"`{cid}` (missing)"
+    # get_channel_or_thread resolves threads too (get_channel does not), so the
+    # escape-room thread no longer renders as "(missing)" when it is in fact set.
+    ch = guild.get_channel_or_thread(int(cid))
+    if ch:
+        return ch.mention
+    # Fall back to a raw mention -- Discord resolves it client-side for any
+    # channel/thread that still exists (e.g. an uncached/archived thread).
+    return f"<#{int(cid)}>"
 
 
 def _role(guild: discord.Guild, rid) -> str:

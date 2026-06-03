@@ -39,6 +39,16 @@
 - New `.set` options: `clankermax` (the L5 role), `defaultrole` (the legacy
   restore role), and `tankboard` (on/off). `.settings` shows all three.
 
+### Settings / mod-log -- display fixes
+- **Escape-room thread no longer shows as "(missing)".** The settings/mod-log
+  channel renderer used `guild.get_channel`, which does not resolve threads, so
+  a correctly-configured `clank_escape_thread` always displayed as missing. It
+  now uses `get_channel_or_thread` and falls back to a raw `<#id>` mention.
+- **Stale mod-log routes are pruned.** `.modlog` dropped per-category routes
+  (and the default/alert channel + ignore entries) that point at channels which
+  have since been deleted, instead of listing dead/old channels that are not
+  present anymore. Cleanup also runs automatically when a channel is deleted.
+
 ## [clankwarden] -- 2026-06-02
 
 ### Containment -- critical fixes

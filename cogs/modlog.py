@@ -37,8 +37,11 @@ from core.framework.ui import C_ERROR, C_INFO, C_NAVY, C_SUCCESS
 def _chan(guild: discord.Guild, cid) -> str:
     if not cid:
         return "_not set_"
-    ch = guild.get_channel(int(cid))
-    return ch.mention if ch else f"`{cid}` (missing)"
+    # get_channel_or_thread resolves threads too (get_channel does not).
+    ch = guild.get_channel_or_thread(int(cid))
+    if ch:
+        return ch.mention
+    return f"<#{int(cid)}>"
 
 
 class ModLog(ModCog):
@@ -301,6 +304,30 @@ class ModLog(ModCog):
             "channel.delete", channel.guild.id, severity=Severity.WARNING, actor=actor,
             summary=f"Channel `{channel.name}` deleted.", metadata={"id": str(channel.id)},
         )
+        # Don't leave behind mod-log config pointing at a channel that no longer
+        # exists -- prune the deleted channel from routes / ignore list / default.
+        await self._prune_deleted_channel(channel.guild.id, channel.id)
+
+    async def _prune_deleted_channel(self, guild_id: int, channel_id: int) -> None:
+        try:
+            s = await self.bot.db.get_guild_settings(guild_id)
+        except Exception:  # noqa: BLE001
+            return
+        routes = s.get("modlog_routes") or {}
+        live = {cat: cid for cat, cid in routes.items() if int(cid) != channel_id}
+        if live != routes:
+            await self.db.update_guild_setting(guild_id, "modlog_routes", live)
+        ignored = list(_ignored_channel_ids(s))
+        if channel_id in ignored:
+            await self.db.update_guild_setting(
+                guild_id, "modlog_ignored_channels",
+                [c for c in ignored if c != channel_id])
+        for key in ("mod_log_channel", "modlog_alert_channel"):
+            try:
+                if s.get(key) and int(s[key]) == channel_id:
+                    await self.db.update_guild_setting(guild_id, key, None)
+            except (TypeError, ValueError):
+                pass
 
     # -- message events -------------------------------------------------------
 
@@ -377,6 +404,15 @@ class ModLog(ModCog):
         """Show the mod-log configuration."""
         s = await self.db.get_guild_settings(ctx.guild.id)
         routes = s.get("modlog_routes") or {}
+        # Drop routes whose channel has since been deleted so the panel never
+        # shows stale entries for channels that are not present anymore.
+        live_routes = {
+            cat: cid for cat, cid in routes.items()
+            if ctx.guild.get_channel_or_thread(int(cid)) is not None
+        }
+        if live_routes != routes:
+            await self.db.update_guild_setting(ctx.guild.id, "modlog_routes", live_routes)
+            routes = live_routes
         muted = s.get("modlog_muted") or []
         rows = await self.logger.stats(ctx.guild.id, hours=24)
         stat_line = ", ".join(f"{r['category']}: {r['n']}" for r in rows) or "no events in 24h"
