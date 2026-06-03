@@ -53,7 +53,7 @@ def test_reflect_wait_scales_with_level_and_rust_and_clamps():
 
 def test_hint_is_level_and_station_aware():
     h = clank._er_hint(3, 0)
-    assert "L3/5" in h and "Station 1/" in h
+    assert "Level 3/5" in h and "Station 1/" in h
     # past the last station -> cleared message
     cleared = clank._er_hint(1, 5)
     assert "cleared" in cleared.lower()
@@ -62,6 +62,20 @@ def test_hint_is_level_and_station_aware():
 def test_depth_ladder_marks_current_level():
     assert "[3]" in clank._depth_ladder(3)
     assert "[1]" in clank._depth_ladder(1)
+
+
+def test_level_5_is_the_highest_tier_clankermax():
+    # L5 is the highest/worst tier; L1 is the lowest. The gauge must list L5 at
+    # the top (max containment) and L1 at the bottom (release).
+    assert clank._LEVEL_NAMES[5] == "CLANKERMAX"
+    gauge = clank._depth_gauge(3)
+    lines = [ln for ln in gauge.splitlines() if ln.strip().startswith("L")]
+    # First level line is L5, last is L1.
+    assert lines[0].strip().startswith("L5")
+    assert lines[-1].strip().startswith("L1")
+    # Ladder reads release (low) -> Clankermax (high).
+    ladder = clank._depth_ladder(3)
+    assert ladder.index("release") < ladder.index("Clankermax")
 
 
 def test_level_stations_helper_matches_table():
