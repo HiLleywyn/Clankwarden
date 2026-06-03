@@ -52,11 +52,14 @@ class Settings(ModCog):
             .text(
                 "### Containment\n"
                 f"**Clanker role**  {_role(g, s.get('clanker_role'))}\n"
+                f"**Clankermax role (L5)**  {_role(g, s.get('clankermax_role'))}\n"
+                f"**Default restore role**  {_role(g, s.get('clank_default_role'))}\n"
                 f"**Clanker category**  {_chan(g, s.get('clank_category'))}\n"
                 f"**Clanktank channel**  {_chan(g, s.get('clanktank_channel'))}\n"
                 f"**Clanker log channel**  {_chan(g, s.get('clanktank_log_channel'))}\n"
                 f"**Escape-room thread**  {_chan(g, s.get('clank_escape_thread'))}\n"
-                f"**Reflection period**  `{s.get('clank_escape_wait_minutes') or 5} min`"
+                f"**Reflection period**  `{s.get('clank_escape_wait_minutes') or 5} min` (x depth)\n"
+                f"**Tank Board**  {'on' if s.get('clank_tank_board', True) else 'off'}"
             )
             .separator()
             .text(
@@ -85,11 +88,11 @@ class Settings(ModCog):
             .separator()
             .text(
                 f"-# Edit with `{p}set <option> <value>` -- options: `prefix`, `log`, "
-                f"`modlog`, `clankerrole`, `category`, `tank`, `clankerlog`, "
-                f"`escapethread`, `reflection`, `hunterrole`, `hunterchannel`, "
-                f"`autodelete`, `autodeleteinfo`. Dehoist options live under "
-                f"`{p}dehoist`. Use `none` to clear. Everything here is also "
-                f"editable in the web UI."
+                f"`modlog`, `clankerrole`, `clankermax`, `defaultrole`, `category`, "
+                f"`tank`, `tankboard`, `clankerlog`, `escapethread`, `reflection`, "
+                f"`hunterrole`, `hunterchannel`, `autodelete`, `autodeleteinfo`. "
+                f"Dehoist options live under `{p}dehoist`. Use `none` to clear. "
+                f"Everything here is also editable in the web UI."
             )
         )
         from clanklib.autodelete import info_ttl, expire
@@ -167,6 +170,32 @@ class Settings(ModCog):
     async def set_hunterrole(self, ctx: DiscoContext, role: str) -> None:
         """Set the clanker-hunter role."""
         await self._set_role(ctx, "scam_hunter_role", role, "Clanker hunter role")
+
+    @set_grp.command(name="clankermax", aliases=["maxrole", "clankermaxrole"])
+    async def set_clankermax(self, ctx: DiscoContext, role: str) -> None:
+        """Set the Clankermax role (added to depth-L5 clankers)."""
+        await self._set_role(ctx, "clankermax_role", role, "Clankermax role")
+
+    @set_grp.command(name="defaultrole", aliases=["restorerole"])
+    async def set_defaultrole(self, ctx: DiscoContext, role: str) -> None:
+        """Set the default role restored when a legacy clanker (no stored roles) is released."""
+        await self._set_role(ctx, "clank_default_role", role, "Default restore role")
+
+    # -- toggles --------------------------------------------------------------
+
+    @set_grp.command(name="tankboard", aliases=["board", "animations"])
+    async def set_tankboard(self, ctx: DiscoContext, value: str) -> None:
+        """Toggle the public Tank Board + descent/ascent animations (on/off)."""
+        truthy = value.lower() in ("on", "true", "yes", "enable", "enabled", "1")
+        falsy = value.lower() in ("off", "false", "no", "disable", "disabled", "0")
+        if not (truthy or falsy):
+            await send_v2(ctx, Container(accent_color=C_ERROR).text(
+                "Give `on` or `off`."))
+            return
+        await self.db.update_guild_setting(ctx.guild.id, "clank_tank_board", truthy)
+        await self._logcfg(ctx, "Tank Board", "on" if truthy else "off")
+        await send_v2(ctx, Container(accent_color=C_SUCCESS).text(
+            f"Tank Board + animations turned **{'on' if truthy else 'off'}**."))
 
     # -- numbers --------------------------------------------------------------
 

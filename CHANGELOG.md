@@ -36,6 +36,8 @@
   (`CLANK_DEFAULT_ROLE_ID`, falling back to a role named User/Member) is
   registered as their restore set -- handed back only when they are unclanked.
 - `.clank info` now shows depth, entry depth, rust, and Clankermax status.
+- New `.set` options: `clankermax` (the L5 role), `defaultrole` (the legacy
+  restore role), and `tankboard` (on/off). `.settings` shows all three.
 
 ## [clankwarden] -- 2026-06-02
 
