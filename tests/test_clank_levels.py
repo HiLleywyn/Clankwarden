@@ -1,0 +1,70 @@
+"""Unit tests for the 5-level clanktank depth model (pure helpers in cogs.clank)."""
+from __future__ import annotations
+
+import discord  # noqa: F401  -- Components V2 era discord.py
+import pytest
+
+# clank.py imports the framework; skip on the dependency-light CI job.
+pytest.importorskip("core.framework.ui")
+
+import cogs.clank as clank  # noqa: E402
+
+
+def test_levels_cover_one_through_five():
+    assert set(clank._ER_LEVEL_STATIONS) == {1, 2, 3, 4, 5}
+
+
+def test_every_station_key_has_a_builder_and_display_name():
+    # Builders are bound in _rebuild; the display-name map is the stable registry.
+    known = set(clank._STATION_DISPLAY_NAMES)
+    for level, stations in clank._ER_LEVEL_STATIONS.items():
+        for key in stations:
+            assert key in known, f"L{level} station {key!r} has no display name"
+
+
+def test_level_1_is_a_short_education_gate():
+    assert clank._ER_LEVEL_STATIONS[1] == ("education",)
+
+
+def test_deeper_levels_are_at_least_as_long():
+    lengths = [len(clank._ER_LEVEL_STATIONS[lv]) for lv in range(1, 6)]
+    assert lengths == sorted(lengths), "deeper levels must not be shorter"
+    assert lengths[-1] == 8  # L5 is the full gauntlet
+
+
+def test_clamp_level_bounds():
+    assert clank._clamp_level(0) == 1
+    assert clank._clamp_level(-3) == 1
+    assert clank._clamp_level(99) == 5
+    assert clank._clamp_level(3) == 3
+    assert clank._clamp_level("notanumber") == 1
+    assert clank._clamp_level(None) == 1
+
+
+def test_reflect_wait_scales_with_level_and_rust_and_clamps():
+    # base 5: L1 -> 5, L3 -> 15, plus rust on top.
+    assert clank._reflect_wait(5, 1, 0) == 5
+    assert clank._reflect_wait(5, 3, 0) == 15
+    assert clank._reflect_wait(5, 3, 2) == 17
+    # never below 1, never above 120.
+    assert clank._reflect_wait(0, 1, 0) == 1
+    assert clank._reflect_wait(100, 5, 50) == 120
+
+
+def test_hint_is_level_and_station_aware():
+    h = clank._er_hint(3, 0)
+    assert "L3/5" in h and "Station 1/" in h
+    # past the last station -> cleared message
+    cleared = clank._er_hint(1, 5)
+    assert "cleared" in cleared.lower()
+
+
+def test_depth_ladder_marks_current_level():
+    assert "[3]" in clank._depth_ladder(3)
+    assert "[1]" in clank._depth_ladder(1)
+
+
+def test_level_stations_helper_matches_table():
+    assert clank._level_stations(4) == clank._ER_LEVEL_STATIONS[4]
+    # out-of-range falls back to the deepest level
+    assert clank._level_stations(99) == clank._ER_LEVEL_STATIONS[5]

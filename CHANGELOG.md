@@ -1,5 +1,39 @@
 # Changelog
 
+## [clankwarden] -- 2026-06-03
+
+### Containment -- 5-level Clank Tank
+- **Depth-based containment.** A clanker is now placed at a depth (L1..L5) that
+  matches their threat instead of one flat escape room. **L1 (Orientation)** is
+  a short, friendly education gate -- read the server rules / etiquette / scam
+  safety and answer one question to walk free. **L5 (Clankermax)** is the full
+  gauntlet reserved for confirmed scammers. To leave, a clanker must **pass each
+  level's trial to rise one level toward the surface**; clearing L1 releases
+  them. **Failing a level's gate sinks them one level deeper** (toward L5) and
+  adds **rust**, which lengthens deeper reflection waits -- a cycle of rust. A
+  Clankermax must climb all five.
+- **Auto-assessed entry depth.** Scam-username / celebrity-impersonation /
+  CCI-100% joins and cluster cleaves enter at **L5** (and gain the Clankermax
+  role); hunter reports and clutch sweeps at **L4**; AutoMod hits at **L3**;
+  dehoist/impersonation at **L3**. Manual clanks default to **L1**; a mod may
+  set the depth: `.clank @user 5 reason`, the `/clank` `level` option, or move
+  someone with `.clank level @user <1-5>`.
+- **One new role: Clankermax.** Layered on top of the base Clanker role at L5
+  (so all existing enforcement is unchanged), added on reaching L5 and removed
+  on rising above it or on release. Auto-created by name if unset; configurable
+  via `CLANKERMAX_ROLE_ID`.
+- **Fun to watch.** A public **Tank Board** (`.clank tank`) shows every
+  clanker's depth, a rust meter, and a depth ladder; short descent/ascent
+  animations play in the tank channel on each level change. Toggle with
+  `CLANK_TANK_BOARD`. Level changes also route through the mod-log
+  (`clanktank` category: placed / ascend / descend / released).
+- **Legacy clanker import.** Members already wearing the Clanker role from a
+  previous bot are adopted into the system at **L3** on startup (and via
+  `.clank import`). They have no stored roles, so a configurable default role
+  (`CLANK_DEFAULT_ROLE_ID`, falling back to a role named User/Member) is
+  registered as their restore set -- handed back only when they are unclanked.
+- `.clank info` now shows depth, entry depth, rust, and Clankermax status.
+
 ## [clankwarden] -- 2026-06-02
 
 ### Containment -- critical fixes

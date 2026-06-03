@@ -171,6 +171,8 @@ class PgDatabase:
             ("clank_category", "CLANK_CATEGORY_ID"),
             ("scam_hunter_role", "CLANKER_HUNTER_ROLE_ID"),
             ("scam_report_channel", "CLANKER_HUNTER_CHANNEL_ID"),
+            ("clankermax_role", "CLANKERMAX_ROLE_ID"),
+            ("clank_default_role", "CLANK_DEFAULT_ROLE_ID"),
             ("mod_log_channel", "MOD_LOG_CHANNEL_ID"),
         ):
             if not d.get(col):
@@ -250,6 +252,9 @@ _GUILD_KEY_ALIASES: dict[str, str] = {
     "CLANK_CATEGORY_ID": "clank_category",
     "CLANKER_HUNTER_ROLE_ID": "scam_hunter_role",
     "CLANKER_HUNTER_CHANNEL_ID": "scam_report_channel",
+    "CLANKERMAX_ROLE_ID": "clankermax_role",
+    "CLANK_DEFAULT_ROLE_ID": "clank_default_role",
+    "CLANK_TANK_BOARD": "clank_tank_board",
     "MOD_LOG_CHANNEL_ID": "mod_log_channel",
     "DEHOIST_ENABLED": "dehoist_enabled",
     "DEHOIST_MODE": "dehoist_mode",
