@@ -1214,7 +1214,7 @@ class Clanktank(commands.Cog):
                 continue
             self._legacy_imported.add(guild.id)
             try:
-                await self._import_legacy_clankers(guild)
+                await self._import_legacy_clankers(guild, reset_existing=False)
             except Exception:
                 log.warning("clanktank: legacy import sweep failed gid=%s", guild.id, exc_info=True)
 
@@ -1625,26 +1625,53 @@ class Clanktank(commands.Cog):
         except Exception:
             log.debug("clanktank: tank animation failed gid=%s", gid)
 
-    async def _import_legacy_clankers(self, guild: discord.Guild) -> int:
-        """Register members who already wear the Clanker role but predate this bot
-        (an old bot clanked them) into the containment system at depth L3. They get
-        the default restore role registered as their stored role so unclanking gives
-        them a safe baseline back. Idempotent: only untracked members are imported.
-        Does NOT auto-open escape rooms (avoids mass spam) -- they get one on
-        ``.clank escape`` or their next message."""
+    async def _import_legacy_clankers(
+        self, guild: discord.Guild, *, reset_existing: bool = False,
+    ) -> tuple[int, int]:
+        """Bring members wearing the Clanker role into the level system at depth L3.
+
+        Returns ``(imported, reset)``. Untracked members (an old bot clanked them,
+        so we have no record) are registered at L3 with the default restore role as
+        their stored role, so unclanking gives them a safe baseline back.
+
+        ``reset_existing`` (the manual ``.clank import``) ALSO forces members who
+        already have a record to L3 -- the "set everyone wearing @clanker to L3
+        right now" button -- and strips Clankermax if they were deeper. The
+        automatic startup sweep leaves existing records alone so a restart never
+        clobbers an actively-placed deep clanker. Does NOT auto-open escape rooms
+        (avoids mass spam) -- they get one on ``.clank escape`` or their next
+        message."""
         role = await self._clanker_role(guild)
         if role is None:
-            return 0
+            return 0, 0
         default_role = await self._default_restore_role(guild)
         stored = [default_role.id] if default_role else []
         imported = 0
+        reset = 0
         for member in list(role.members):
             if member.bot:
                 continue
-            if (member.id, guild.id) in self._clanked:
-                continue
-            if await self._get_record(member.id, guild.id):
+            existing = await self._get_record(member.id, guild.id)
+            if existing:
                 self._clanked.add((member.id, guild.id))
+                if reset_existing and _clamp_level(existing.get("level") or 1) != 3:
+                    try:
+                        await self.bot.db.execute(
+                            "UPDATE clanker_records SET level=3, entry_level=3, rust=0, "
+                            "level_changed_at=now() WHERE user_id=$1 AND guild_id=$2",
+                            member.id, guild.id,
+                        )
+                        await self.bot.db.execute(
+                            "UPDATE clank_escape SET level=3 WHERE user_id=$1 AND guild_id=$2 "
+                            "AND completed_at IS NULL",
+                            member.id, guild.id,
+                        )
+                        # Coming up from L5 -- shed the Clankermax tier role.
+                        await self._set_clankermax(member, False)
+                        reset += 1
+                    except Exception:
+                        log.warning("clanktank: legacy reset failed uid=%s gid=%s",
+                                    member.id, guild.id, exc_info=True)
                 continue
             try:
                 case_num = await self._next_case_num(guild.id)
@@ -1663,10 +1690,11 @@ class Clanktank(commands.Cog):
             except Exception:
                 log.warning("clanktank: legacy import failed uid=%s gid=%s",
                             member.id, guild.id, exc_info=True)
-        if imported:
-            log.info("clanktank: imported %d legacy clanker(s) at L3 gid=%s", imported, guild.id)
+        if imported or reset:
+            log.info("clanktank: legacy import gid=%s imported=%d reset=%d (all at L3)",
+                     guild.id, imported, reset)
             asyncio.ensure_future(self._refresh_tank_board(guild.id))
-        return imported
+        return imported, reset
 
     async def _allowed_role_ids(self, guild: discord.Guild) -> set[int]:
         allowed = {guild.default_role.id}
@@ -5474,8 +5502,9 @@ class Clanktank(commands.Cog):
     @clanker_group.command(name="import", aliases=["register", "adopt"])
     @guild_only
     async def clanker_import(self, ctx: DiscoContext) -> None:
-        """Register legacy clankers: anyone already wearing the Clanker role who
-        predates this bot is adopted into the system at depth L3."""
+        """Set EVERYONE wearing the Clanker role to depth L3 right now -- register
+        anyone the bot has no record of (e.g. clanked by an old bot) and reset
+        existing records to L3 too."""
         if not ctx.author.guild_permissions.manage_guild:
             await ctx.reply_error("You need Manage Server permission.")
             return
@@ -5484,14 +5513,17 @@ class Clanktank(commands.Cog):
             await ctx.reply_error(
                 f'No "{_CLANKER_ROLE_NAME}" role found. Run `.init` or set one first.')
             return
-        n = await self._import_legacy_clankers(ctx.guild)
+        imported, reset = await self._import_legacy_clankers(ctx.guild, reset_existing=True)
         default_role = await self._default_restore_role(ctx.guild)
+        role_members = sum(1 for m in role.members if not m.bot)
         await ctx.reply(
             view=_v2(
-                "Legacy Clanker Import",
+                "Clanker Import -- everyone set to L3",
                 color=C_NAVY,
                 fields=[
-                    ("Imported", f"{n} member(s) registered at L3 (STANDARD CONTAINMENT)"),
+                    ("Role members", f"{role_members} member(s) wearing @{role.name}"),
+                    ("Newly registered", f"{imported} (were untracked) -> L3"),
+                    ("Reset to L3", f"{reset} existing record(s) moved to L3"),
                     ("Default restore role",
                      default_role.mention if default_role else
                      "none found -- set `.set clank_default_role @role` so releases restore something"),
