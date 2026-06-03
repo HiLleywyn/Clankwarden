@@ -12,3 +12,9 @@ ALTER TABLE clanker_records ADD COLUMN IF NOT EXISTS level_changed_at TIMESTAMPT
 ALTER TABLE clank_escape   ADD COLUMN IF NOT EXISTS level             SMALLINT    NOT NULL DEFAULT 1;
 
 CREATE INDEX IF NOT EXISTS idx_clanker_records_level ON clanker_records (guild_id, level);
+
+-- Backfill: every clanker that already exists predates the level system, so seat
+-- them all at L3 (STANDARD CONTAINMENT). New manual clanks default to L1; this
+-- one-time UPDATE only touches the rows present when the migration first runs.
+UPDATE clanker_records SET level = 3, entry_level = 3;
+UPDATE clank_escape   SET level = 3 WHERE completed_at IS NULL;
