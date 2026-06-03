@@ -76,14 +76,24 @@ from core.framework.ui import (
     C_PURPLE,
     C_SUCCESS,
     C_WARNING,
+    FormatKit,
     fmt_ts,
 )
+
+try:
+    from clanklib.modlog import Severity
+except Exception:  # pragma: no cover - modlog is always present in this bot
+    Severity = None  # type: ignore[assignment]
 
 log = logging.getLogger(__name__)
 
 # -- Role / channel constants --------------------------------------------------
 
 _CLANKER_ROLE_NAME = "Clanker"
+_CLANKERMAX_ROLE_NAME = "Clankermax"
+# Default role names tried (in order) when restoring a legacy clanker who has no
+# stored roles -- a safe baseline so unclank gives them something back.
+_DEFAULT_RESTORE_ROLE_NAMES = ("User", "Member", "Members")
 
 # -- Score increments ----------------------------------------------------------
 
@@ -1182,6 +1192,7 @@ class Clanktank(commands.Cog):
         self._enforce_ts: dict[int, float] = {}
         self._clarion_msg_ids: set[int] = set()
         self._clarion_rate: dict[int, collections.deque] = {}
+        self._legacy_imported: set[int] = set()  # guild ids already backfilled
 
     # -- Lifecycle ------------------------------------------------------------
 
@@ -1192,6 +1203,20 @@ class Clanktank(commands.Cog):
         self._sweep.start()
         await self._restore_escape_views()
         log.info("Clanktank ready: %d active clankers %d escape rooms", len(self._clanked), len(self._escape_msg_ids))
+
+    @commands.Cog.listener()
+    async def on_ready(self) -> None:
+        """Once connected, adopt any legacy clankers (members already wearing the
+        Clanker role that an old bot applied, which we have no record of) into the
+        system at depth L3. Idempotent + once per guild per process."""
+        for guild in list(self.bot.guilds):
+            if guild.id in self._legacy_imported:
+                continue
+            self._legacy_imported.add(guild.id)
+            try:
+                await self._import_legacy_clankers(guild)
+            except Exception:
+                log.warning("clanktank: legacy import sweep failed gid=%s", guild.id, exc_info=True)
 
     async def _load_escape_thread_override(self) -> None:
         """Reset the legacy global escape-thread override.
@@ -1216,7 +1241,7 @@ class Clanktank(commands.Cog):
         cleared = 0
         try:
             rows = await self.bot.db.fetch_all(
-                "SELECT user_id, guild_id, case_num, message_id, step, step_data "
+                "SELECT user_id, guild_id, case_num, message_id, step, step_data, level "
                 "FROM clank_escape WHERE message_id IS NOT NULL AND completed_at IS NULL"
             )
             self._escape_msg_ids = set()
@@ -1253,6 +1278,7 @@ class Clanktank(commands.Cog):
                     self, int(r["user_id"]), int(r["guild_id"]),
                     int(r.get("case_num") or 0), username,
                     int(r.get("step") or 0), step_data,
+                    level=_clamp_level(r.get("level") or 1),
                 )
                 self.bot.add_view(view, message_id=mid)
                 registered += 1
@@ -1386,6 +1412,261 @@ class Clanktank(commands.Cog):
             if role:
                 return role
         return discord.utils.get(guild.roles, name=_CLANKER_ROLE_NAME)
+
+    async def _clankermax_role(self, guild: discord.Guild) -> discord.Role | None:
+        """Resolve the Clankermax (depth-L5) role: configured id, else by name."""
+        rid = await self._guild_channel_id(guild.id, "clankermax_role", 0)
+        if rid:
+            role = guild.get_role(int(rid))
+            if role:
+                return role
+        return discord.utils.get(guild.roles, name=_CLANKERMAX_ROLE_NAME)
+
+    async def _ensure_clankermax_role(self, guild: discord.Guild) -> discord.Role | None:
+        """Resolve the Clankermax role, creating + persisting it if absent."""
+        role = await self._clankermax_role(guild)
+        if role:
+            return role
+        try:
+            role = await guild.create_role(
+                name=_CLANKERMAX_ROLE_NAME,
+                colour=discord.Colour(0x8B0000),
+                reason="Clanktank: Clankermax (depth L5) tier role",
+            )
+        except Exception:
+            log.warning("clanktank: could not create Clankermax role gid=%s", guild.id, exc_info=True)
+            return None
+        try:
+            await self.bot.db.update_guild_setting(guild.id, "clankermax_role", role.id)
+        except Exception:
+            pass
+        return role
+
+    async def _set_clankermax(self, member: discord.Member | None, on: bool) -> None:
+        """Add/remove the Clankermax role (best-effort, idempotent). The base
+        Clanker role and all enforcement are unaffected -- this is purely the L5
+        tier marker."""
+        if member is None:
+            return
+        guild = member.guild
+        try:
+            if on:
+                role = await self._ensure_clankermax_role(guild)
+                if role and role not in member.roles:
+                    await member.add_roles(role, reason="Clanktank: reached depth L5 (Clankermax)")
+            else:
+                role = await self._clankermax_role(guild)
+                if role and role in member.roles:
+                    await member.remove_roles(role, reason="Clanktank: rose above depth L5")
+        except discord.Forbidden:
+            log.warning("clanktank: Clankermax role op forbidden (hierarchy) uid=%s gid=%s",
+                        member.id, guild.id)
+        except Exception:
+            log.debug("clanktank: Clankermax role op failed uid=%s", member.id)
+
+    async def _default_restore_role(self, guild: discord.Guild) -> discord.Role | None:
+        """The safe baseline role handed back to a legacy clanker on release (they
+        have no stored roles). Configurable via ``clank_default_role``, else the
+        first role found by a common member-role name."""
+        rid = await self._guild_channel_id(guild.id, "clank_default_role", 0)
+        if rid:
+            role = guild.get_role(int(rid))
+            if role:
+                return role
+        for nm in _DEFAULT_RESTORE_ROLE_NAMES:
+            role = discord.utils.get(guild.roles, name=nm)
+            if role:
+                return role
+        return None
+
+    async def _on_level_change(
+        self, uid: int, gid: int, old_level: int, new_level: int,
+        direction: str, rust: int,
+    ) -> None:
+        """Persist a depth change, toggle the Clankermax role at the L5 boundary,
+        route the event through the modlog, and drive the entertainment layer."""
+        try:
+            await self.bot.db.execute(
+                "UPDATE clanker_records SET level=$3, rust=$4, level_changed_at=now() "
+                "WHERE user_id=$1 AND guild_id=$2",
+                uid, gid, int(new_level), int(rust),
+            )
+        except Exception:
+            pass
+        guild = self.bot.get_guild(gid)
+        member = guild.get_member(uid) if guild else None
+        # Clankermax role at the L5 boundary.
+        if new_level >= _CLANK_MAX_LEVEL and old_level < _CLANK_MAX_LEVEL:
+            await self._set_clankermax(member, True)
+        elif old_level >= _CLANK_MAX_LEVEL and new_level < _CLANK_MAX_LEVEL:
+            await self._set_clankermax(member, False)
+        name = str(member) if member else f"<@{uid}>"
+        try:
+            sev = (Severity.ALERT if (direction == "descend" and new_level >= _CLANK_MAX_LEVEL)
+                   else Severity.NOTICE)
+            await self.bot.modlog.clanktank(
+                f"clank_{direction}", gid, severity=sev, target=member or uid,
+                summary=f"{name} {direction}ed L{old_level} -> L{new_level} (rust {rust})",
+                metadata={"from_level": old_level, "to_level": new_level,
+                          "rust": rust, "direction": direction},
+            )
+        except Exception:
+            pass
+        asyncio.ensure_future(self._tank_animate(gid, name, old_level, new_level, direction))
+        await self._refresh_tank_board(gid)
+
+    # -- Entertainment: the public Tank Board + descent/ascent animations -----
+
+    async def _render_tank_panel(self, gid: int) -> "discord.ui.LayoutView":
+        """Build the public Tank Board: every active clanker by depth + rust."""
+        try:
+            rows = await self.bot.db.fetch_all(
+                "SELECT user_id, level, entry_level, rust, case_num FROM clanker_records "
+                "WHERE guild_id=$1 ORDER BY level DESC, rust DESC, level_changed_at ASC LIMIT 12",
+                gid,
+            )
+        except Exception:
+            rows = []
+        guild = self.bot.get_guild(gid)
+        items: list[discord.ui.Item] = [
+            discord.ui.TextDisplay("## The Clank Tank"),
+            discord.ui.TextDisplay(
+                "-# Deeper = harder to escape. L5 = Clankermax. Clear each level to "
+                "rise toward the surface and go free. Fail and you sink."),
+            discord.ui.Separator(spacing=discord.SeparatorSpacing.small),
+        ]
+        if not rows:
+            items.append(discord.ui.TextDisplay("The tank is empty. The water is calm. For now."))
+        else:
+            for r in rows:
+                ruid = int(r["user_id"])
+                m = guild.get_member(ruid) if guild else None
+                nm = m.display_name if m else f"user {ruid}"
+                lvl = _clamp_level(r.get("level") or 1)
+                rust = int(r.get("rust") or 0)
+                cnum = int(r.get("case_num") or 0)
+                bar = FormatKit.bar(min(rust, _RUST_MAX), _RUST_MAX, width=10)
+                items.append(discord.ui.TextDisplay(
+                    f"**{nm}**  **L{lvl}** {_LEVEL_NAMES[lvl]}\n"
+                    f"-# Case #{cnum:06d}  |  {_depth_ladder(lvl)}\n"
+                    f"-# rust {bar} {rust}/{_RUST_MAX}"
+                ))
+        return _V2Embed(discord.ui.Container(*items, accent_color=C_NAVY))
+
+    async def _refresh_tank_board(self, gid: int) -> None:
+        """(Re)render the persistent Tank Board message in the clanktank channel."""
+        try:
+            s = await self.bot.db.get_guild_settings(gid)
+        except Exception:
+            return
+        if not bool(s.get("clank_tank_board", True)):
+            return
+        ch = await self._tank_channel(gid)
+        if ch is None:
+            return
+        try:
+            view = await self._render_tank_panel(gid)
+        except Exception:
+            return
+        msg_id = s.get("clank_tank_board_msg")
+        msg = None
+        if msg_id:
+            try:
+                msg = await ch.fetch_message(int(msg_id))
+            except Exception:
+                msg = None
+        try:
+            if msg is not None:
+                await msg.edit(view=view)
+            else:
+                sent = await ch.send(view=view)
+                await self.bot.db.update_guild_setting(gid, "clank_tank_board_msg", sent.id)
+        except Exception:
+            log.debug("clanktank: tank board refresh failed gid=%s", gid)
+
+    async def _tank_animate(
+        self, gid: int, name: str, old_level: int, new_level: int, direction: str,
+    ) -> None:
+        """Play a short descent/ascent animation on a transient message (never the
+        persistent escape view), capped + paced to stay well under rate limits."""
+        try:
+            s = await self.bot.db.get_guild_settings(gid)
+        except Exception:
+            return
+        if not bool(s.get("clank_tank_board", True)):
+            return
+        ch = await self._tank_channel(gid)
+        if ch is None:
+            return
+        descend = direction == "descend"
+        flavor = random.choice(_ER_DESCEND_FLAVOR if descend else _ER_ASCEND_FLAVOR)
+        arrow = "v v v" if descend else "^ ^ ^"
+        step = 1 if new_level >= old_level else -1
+        seq = list(range(old_level, new_level + step, step)) or [new_level]
+        frames = [
+            _V2Embed(discord.ui.Container(
+                discord.ui.TextDisplay(f"## {name} -- {direction.upper()}ING {arrow}"),
+                discord.ui.TextDisplay(_depth_gauge(cur)),
+                discord.ui.TextDisplay(f"-# {flavor}"),
+                accent_color=C_ERROR if descend else C_SUCCESS,
+            ))
+            for cur in seq[:4]
+        ]
+        try:
+            msg = await ch.send(view=frames[0])
+            for fr in frames[1:]:
+                await asyncio.sleep(1.0)
+                await msg.edit(view=fr)
+            await asyncio.sleep(4.0)
+            try:
+                await msg.delete()
+            except Exception:
+                pass
+        except Exception:
+            log.debug("clanktank: tank animation failed gid=%s", gid)
+
+    async def _import_legacy_clankers(self, guild: discord.Guild) -> int:
+        """Register members who already wear the Clanker role but predate this bot
+        (an old bot clanked them) into the containment system at depth L3. They get
+        the default restore role registered as their stored role so unclanking gives
+        them a safe baseline back. Idempotent: only untracked members are imported.
+        Does NOT auto-open escape rooms (avoids mass spam) -- they get one on
+        ``.clank escape`` or their next message."""
+        role = await self._clanker_role(guild)
+        if role is None:
+            return 0
+        default_role = await self._default_restore_role(guild)
+        stored = [default_role.id] if default_role else []
+        imported = 0
+        for member in list(role.members):
+            if member.bot:
+                continue
+            if (member.id, guild.id) in self._clanked:
+                continue
+            if await self._get_record(member.id, guild.id):
+                self._clanked.add((member.id, guild.id))
+                continue
+            try:
+                case_num = await self._next_case_num(guild.id)
+                await self.bot.db.execute(
+                    """INSERT INTO clanker_records
+                       (user_id, guild_id, case_num, stored_roles, reason, clank_context,
+                        usernames, display_names, level, entry_level, rust, level_changed_at)
+                       VALUES ($1, $2, $3, $4, $5, $5, $6, $7, 3, 3, 0, now())
+                       ON CONFLICT (user_id, guild_id) DO NOTHING""",
+                    member.id, guild.id, case_num, stored,
+                    "Legacy import (already wore the Clanker role)",
+                    [member.name], [member.display_name],
+                )
+                self._clanked.add((member.id, guild.id))
+                imported += 1
+            except Exception:
+                log.warning("clanktank: legacy import failed uid=%s gid=%s",
+                            member.id, guild.id, exc_info=True)
+        if imported:
+            log.info("clanktank: imported %d legacy clanker(s) at L3 gid=%s", imported, guild.id)
+            asyncio.ensure_future(self._refresh_tank_board(guild.id))
+        return imported
 
     async def _allowed_role_ids(self, guild: discord.Guild) -> set[int]:
         allowed = {guild.default_role.id}
@@ -2729,7 +3010,7 @@ class Clanktank(commands.Cog):
                 await self._do_clank(
                     member_obj, actor,
                     f"Scam report by hunter <@{uid}>",
-                    duration_s=None,
+                    duration_s=None, entry_level=4,
                 )
                 clanked.append(target_id)
             except Exception:
@@ -3087,7 +3368,7 @@ class Clanktank(commands.Cog):
                     await self._do_clank(
                         member, actor,
                         f"Auto-clank: scam keyword in username ({scam_kw!r})",
-                        None, defer_purge=True,
+                        None, defer_purge=True, entry_level=5,
                     )
                     await self._log_mod(gid, _v2(
                         "Auto-Clank: Scam Username",
@@ -3115,7 +3396,7 @@ class Clanktank(commands.Cog):
                     await self._do_clank(
                         member, actor,
                         f"Auto-clank: public figure impersonation ({celeb_hit!r})",
-                        None, defer_purge=True,
+                        None, defer_purge=True, entry_level=5,
                     )
                     await self._log_mod(gid, _v2(
                         "Auto-Clank: Celebrity / Public Figure Impersonation",
@@ -3147,7 +3428,7 @@ class Clanktank(commands.Cog):
                         await self._do_clank(
                             member, actor,
                             f"Auto-clank: CCI score {score:.0%} (100% confidence)",
-                            None, defer_purge=True,
+                            None, defer_purge=True, entry_level=5,
                         )
                         await self._log_mod(gid, _v2(
                             "Auto-Clank: CCI 100% Confidence",
@@ -3517,7 +3798,7 @@ class Clanktank(commands.Cog):
                 try:
                     await message.reply(
                         "run `.clank escape` to get the link to your escape room "
-                        "-- work through the 7 stations to request release. "
+                        "-- clear each level of the tank to rise toward the surface and be released. "
                         "check your DMs if you missed the original link.",
                         mention_author=False,
                         allowed_mentions=discord.AllowedMentions.none(),
@@ -3665,7 +3946,8 @@ class Clanktank(commands.Cog):
 
         reason = f"AutoMod: {trigger_name}" + (f" [{keyword}]" if keyword else "")
         try:
-            purged, _ = await self._do_clank(member, actor, reason, duration_s=None, channel=trigger_ch)
+            purged, _ = await self._do_clank(member, actor, reason, duration_s=None,
+                                             channel=trigger_ch, entry_level=3)
         except Exception:
             log.warning(
                 "clanktank: automod auto-clank failed uid=%s gid=%s",
@@ -3819,13 +4101,15 @@ class Clanktank(commands.Cog):
             log.exception("clanktank: _purge_and_store_bg failed uid=%s", uid)
 
     async def warden_contain(self, member: discord.Member, *, reason: str,
-                             duration_s: int | None = None) -> None:
+                             duration_s: int | None = None, entry_level: int = 3) -> None:
         """Public entrypoint for the dehoist cog and the report flow to clank a
         user through the exact same containment path as every other clank (the
         bot acts as the moderator). ``duration_s`` clanks temporarily -- e.g.
-        ``1800`` for the 30-minute false-report penalty."""
+        ``1800`` for the 30-minute false-report penalty. ``entry_level`` is the
+        containment depth (impersonation defaults to L3)."""
         actor = member.guild.me
-        await self._do_clank(member, actor, reason, duration_s, defer_purge=True)
+        await self._do_clank(member, actor, reason, duration_s, defer_purge=True,
+                             entry_level=entry_level)
         await self._audit(
             "auto_clank_dehoist", member.guild.id, user_id=member.id,
             details={"reason": reason, "duration_s": duration_s},
@@ -3842,9 +4126,11 @@ class Clanktank(commands.Cog):
         defer_purge: bool = False,
         allow_booster: bool = False,
         manual: bool = False,
+        entry_level: int = 1,
     ) -> tuple[list[discord.Message], list[dict]]:
         guild = member.guild
         uid, gid = member.id, guild.id
+        entry_level = _clamp_level(entry_level)
 
         clanker_role = await self._clanker_role(guild)
         if clanker_role is None:
@@ -3901,8 +4187,9 @@ class Clanktank(commands.Cog):
         await self.bot.db.execute(
             """INSERT INTO clanker_records
                (user_id, guild_id, case_num, stored_roles, reason, clank_context,
-                expires_at, usernames, display_names)
-               VALUES ($1, $2, $8, $3, $4, $4, $5, $6, $7)
+                expires_at, usernames, display_names,
+                level, entry_level, rust, level_changed_at)
+               VALUES ($1, $2, $8, $3, $4, $4, $5, $6, $7, $9, $9, 0, now())
                ON CONFLICT (user_id, guild_id) DO UPDATE
                SET case_num              = $8,
                    stored_roles          = $3,
@@ -3918,13 +4205,31 @@ class Clanktank(commands.Cog):
                    last_message_at       = NULL,
                    left_at               = NULL,
                    usernames             = $6,
-                   display_names         = $7""",
+                   display_names         = $7,
+                   level                 = $9,
+                   entry_level           = $9,
+                   rust                  = 0,
+                   level_changed_at      = now()""",
             uid, gid, stored_role_ids, reason, expires_at,
-            [member.name], [member.display_name], case_num,
+            [member.name], [member.display_name], case_num, entry_level,
         )
         self._clanked.add((uid, gid))
+        # Confirmed-scammer tier gets the Clankermax role layered on top of Clanker.
+        if entry_level >= _CLANK_MAX_LEVEL:
+            asyncio.ensure_future(self._set_clankermax(member, True))
+        try:
+            await self.bot.modlog.clanktank(
+                "clank_placed", gid, target=member,
+                summary=f"{member} placed in the tank at depth L{entry_level} "
+                        f"({_LEVEL_NAMES[entry_level]})",
+                metadata={"entry_level": entry_level, "case_num": case_num},
+            )
+        except Exception:
+            pass
+        asyncio.ensure_future(self._refresh_tank_board(gid))
         if not member.bot:
-            asyncio.ensure_future(self._start_escape_room(member, force_new=True, send_intro=True))
+            asyncio.ensure_future(self._start_escape_room(
+                member, force_new=True, send_intro=True, level=entry_level))
 
         if defer_purge:
             asyncio.create_task(self._purge_and_store_bg(
@@ -4252,6 +4557,8 @@ class Clanktank(commands.Cog):
                         await member.remove_roles(clanker_role, reason="Clanktank: released")
                     except Exception:
                         pass
+                # Strip the Clankermax tier role too (best-effort, idempotent).
+                await self._set_clankermax(member, False)
                 stored_ids: set[int] = set(rec.get("stored_roles") or []) if rec else set()
                 to_restore = [r for r in guild.roles if r.id in stored_ids]
                 if to_restore:
@@ -4281,6 +4588,19 @@ class Clanktank(commands.Cog):
                 "final_messages": rec.get("message_count") if rec else None,
             },
         )
+        try:
+            _g = self.bot.get_guild(guild_id)
+            _m = _g.get_member(user_id) if _g else None
+            await self.bot.modlog.clanktank(
+                "clank_released", guild_id, severity=Severity.NOTICE,
+                target=_m or user_id,
+                summary="released from the Clank Tank -- reached the surface",
+                metadata={"auto": auto, "final_level": rec.get("level") if rec else None,
+                          "rust": rec.get("rust") if rec else None},
+            )
+        except Exception:
+            pass
+        asyncio.ensure_future(self._refresh_tank_board(guild_id))
         return True, rec, restored
 
     async def _log_release(
@@ -4340,24 +4660,27 @@ class Clanktank(commands.Cog):
         *,
         step: int | None = None,
         step_data: dict | None = None,
+        level: int | None = None,
     ) -> None:
         try:
-            if step is not None and step_data is not None:
-                await self.bot.db.execute(
-                    "UPDATE clank_escape SET step=$3, step_data=$4, step_started_at=NOW() "
-                    "WHERE user_id=$1 AND guild_id=$2",
-                    uid, gid, step, _json.dumps(step_data),
-                )
-            elif step is not None:
-                await self.bot.db.execute(
-                    "UPDATE clank_escape SET step=$3, step_started_at=NOW() WHERE user_id=$1 AND guild_id=$2",
-                    uid, gid, step,
-                )
-            elif step_data is not None:
-                await self.bot.db.execute(
-                    "UPDATE clank_escape SET step_data=$3 WHERE user_id=$1 AND guild_id=$2",
-                    uid, gid, _json.dumps(step_data),
-                )
+            sets: list[str] = []
+            vals: list = []
+            if step is not None:
+                vals.append(int(step))
+                sets.append(f"step=${2 + len(vals)}")
+                sets.append("step_started_at=NOW()")
+            if step_data is not None:
+                vals.append(_json.dumps(step_data))
+                sets.append(f"step_data=${2 + len(vals)}")
+            if level is not None:
+                vals.append(int(level))
+                sets.append(f"level=${2 + len(vals)}")
+            if not vals:
+                return
+            await self.bot.db.execute(
+                f"UPDATE clank_escape SET {', '.join(sets)} WHERE user_id=$1 AND guild_id=$2",
+                uid, gid, *vals,
+            )
         except Exception:
             log.exception("clanktank: _er_save failed uid=%s gid=%s", uid, gid)
 
@@ -4369,8 +4692,9 @@ class Clanktank(commands.Cog):
         except Exception:
             return None
 
-    async def _er_update_hint(self, uid: int, gid: int, step: int) -> None:
-        """Edit the per-user hint message in the escape thread to reflect the current step."""
+    async def _er_update_hint(self, uid: int, gid: int, level: int, step: int) -> None:
+        """Edit the per-user hint message in the escape thread to reflect the current
+        depth + station."""
         try:
             row = await self._er_get(uid, gid)
             if not row:
@@ -4386,7 +4710,7 @@ class Clanktank(commands.Cog):
             thread = guild.get_channel_or_thread(int(thread_id))
             if not isinstance(thread, discord.Thread):
                 return
-            hint_text = _ER_STEP_HINTS[min(step, len(_ER_STEP_HINTS) - 1)]
+            hint_text = _er_hint(level, step)
             try:
                 msg = await thread.fetch_message(int(hint_msg_id))
                 await msg.edit(content=hint_text)
@@ -4450,13 +4774,16 @@ class Clanktank(commands.Cog):
             return False
 
     async def _start_escape_room(
-        self, member: discord.Member, *, force_new: bool = False, send_intro: bool = False
+        self, member: discord.Member, *, force_new: bool = False, send_intro: bool = False,
+        level: int | None = None,
     ) -> str | None:
         """Post a user's escape-room view in the shared escape thread. Returns error string on failure.
 
         force_new   -- wipe any existing room and reset progress to station 1 (used on re-clank).
         send_intro  -- DM the educational "you've been placed in the Clank Tank" message + link
                        (only on the initial clank, never on a plain ``.clank escape``).
+        level       -- entry depth for a (re)created room; defaults to the record's
+                       current level, else L1.
         """
         uid, gid = member.id, member.guild.id
         existing = await self._er_get(uid, gid)
@@ -4474,6 +4801,10 @@ class Clanktank(commands.Cog):
         if not case_num:
             case_num = await self._next_case_num(gid)
 
+        # Resolve the containment depth this room should run at.
+        rec_level = _clamp_level(_cr.get("level") or 1) if _cr else 1
+        use_level = _clamp_level(level) if level is not None else rec_level
+
         if existing and existing.get("completed_at") is None:
             ed = _parse_step_data(existing.get("step_data"))
             mid = existing.get("message_id")
@@ -4487,6 +4818,7 @@ class Clanktank(commands.Cog):
                             self, uid, gid, case_num,
                             ed.get("username", str(member)),
                             int(existing.get("step") or 0), ed,
+                            level=_clamp_level(existing.get("level") or use_level),
                         )
                         self._escape_msg_ids.add(int(mid))
                         self.bot.add_view(view, message_id=int(mid))
@@ -4501,10 +4833,21 @@ class Clanktank(commands.Cog):
                 keep_step = 0
                 keep_data = {"username": str(member)}
             else:
+                # Resume at the existing room's depth + station.
+                use_level = _clamp_level(existing.get("level") or use_level)
                 keep_step = int(existing.get("step") or 0)
                 keep_data = {k: v for k, v in ed.items() if k not in ("hint_msg_id", "ping_msg_id")}
                 keep_data.setdefault("username", str(member))
             await self._er_delete_message(existing)
+
+        # Clamp the carried station into the resolved level's range.
+        _stations = _level_stations(use_level)
+        if not (0 <= keep_step < len(_stations)):
+            keep_step = 0
+
+        # Carry accrued rust so the reflection wait stays honest across restarts.
+        if _cr and "rust" not in keep_data:
+            keep_data["rust"] = int(_cr.get("rust") or 0)
 
         tank_ch_id = await self._guild_channel_id(
             gid, "clanktank_channel", Config.CLANKTANK_CHANNEL_ID)
@@ -4522,8 +4865,10 @@ class Clanktank(commands.Cog):
                 f"   *(Server Settings -> Privacy Settings -> Allow direct messages from server members)*\n"
                 f"2. Go to <#{tank_ch_id}> and run `.clank escape`\n"
                 f"3. You will be shown a link to your escape room\n"
-                f"4. Complete all 8 stations\n"
-                f"5. You will be released automatically when done\n\n"
+                f"4. You are at **depth L{use_level} of 5** ({_LEVEL_NAMES[use_level]}). "
+                f"Clear each level's trial to rise toward the surface\n"
+                f"5. Clear the final level and you are released automatically\n\n"
+                f"-# Careful: failing a level's test sinks you deeper into the tank.\n\n"
                 f"If you believe this is a mistake, reach out to a moderator directly.\n\n"
                 f"-# Keep your DMs open until you are released."
             )
@@ -4561,7 +4906,7 @@ class Clanktank(commands.Cog):
         # Hint message sent FIRST so it appears above the interactive view.
         hint_msg_id: int | None = None
         try:
-            hint_msg = await thread.send(_ER_STEP_HINTS[min(keep_step, len(_ER_STEP_HINTS) - 1)])
+            hint_msg = await thread.send(_er_hint(use_level, keep_step))
             hint_msg_id = hint_msg.id
         except Exception:
             pass
@@ -4571,8 +4916,8 @@ class Clanktank(commands.Cog):
         ping_msg_id: int | None = None
         try:
             ping_msg = await thread.send(
-                f"{member.mention} -- your containment proceedings have begun. "
-                "Work through all 8 stations to be released."
+                f"{member.mention} -- your containment proceedings have begun at "
+                f"**depth L{use_level} of 5**. Clear each level to rise toward the surface."
             )
             ping_msg_id = ping_msg.id
         except Exception:
@@ -4584,7 +4929,8 @@ class Clanktank(commands.Cog):
             step_data["hint_msg_id"] = hint_msg_id
         if ping_msg_id:
             step_data["ping_msg_id"] = ping_msg_id
-        view = _EscapeRoomView(self, uid, gid, case_num, step_data["username"], keep_step, step_data)
+        view = _EscapeRoomView(self, uid, gid, case_num, step_data["username"], keep_step,
+                               step_data, level=use_level)
         try:
             msg = await thread.send(view=view)
         except Exception:
@@ -4593,13 +4939,13 @@ class Clanktank(commands.Cog):
 
         try:
             await self.bot.db.execute(
-                """INSERT INTO clank_escape (user_id, guild_id, case_num, thread_id, message_id, step, step_data)
-                   VALUES ($1, $2, $3, $4, $5, $7, $6)
+                """INSERT INTO clank_escape (user_id, guild_id, case_num, thread_id, message_id, step, step_data, level)
+                   VALUES ($1, $2, $3, $4, $5, $7, $6, $8)
                    ON CONFLICT (user_id, guild_id) DO UPDATE SET
                        case_num=EXCLUDED.case_num, thread_id=EXCLUDED.thread_id,
                        message_id=EXCLUDED.message_id, step=EXCLUDED.step, step_data=EXCLUDED.step_data,
-                       step_started_at=NOW(), completed_at=NULL""",
-                uid, gid, case_num, thread.id, msg.id, _json.dumps(step_data), keep_step,
+                       level=EXCLUDED.level, step_started_at=NOW(), completed_at=NULL""",
+                uid, gid, case_num, thread.id, msg.id, _json.dumps(step_data), keep_step, use_level,
             )
         except Exception:
             log.exception("clanktank: escape DB insert failed uid=%s", uid)
@@ -4735,7 +5081,12 @@ class Clanktank(commands.Cog):
             await asyncio.sleep(delay)
         try:
             row = await self._er_get(uid, gid)
-            if not row or int(row.get("step") or 0) != 4:
+            if not row:
+                return
+            level = _clamp_level(row.get("level") or 1)
+            step = int(row.get("step") or 0)
+            stations = _level_stations(level)
+            if not (0 <= step < len(stations)) or stations[step] != "reflect":
                 return
             mid = row.get("message_id")
             if not mid:
@@ -4747,7 +5098,7 @@ class Clanktank(commands.Cog):
             step_data = _parse_step_data(row.get("step_data"))
             case_num = int(row.get("case_num") or 0)
             username = step_data.get("username", "")
-            view = _EscapeRoomView(self, uid, gid, case_num, username, 4, step_data)
+            view = _EscapeRoomView(self, uid, gid, case_num, username, step, step_data, level=level)
             await msg.edit(view=view)
         except Exception:
             pass
@@ -4857,8 +5208,9 @@ class Clanktank(commands.Cog):
     @guild_only
     async def clanker_group(self, ctx: DiscoContext, user: discord.Member = None,
                             *args: str) -> None:
-        """Clank a user: .clank @user [reason] [duration]; no user opens help."""
-        # ``.clank @user [reason] [duration]`` clanks someone directly; bare
+        """Clank a user: .clank @user [level 1-5] [reason] [duration]; no user opens help."""
+        # ``.clank @user [level] [reason] [duration]`` clanks someone directly
+        # (optional leading 1-5 sets the containment depth; default 1). Bare
         # ``.clank`` (no user) opens the help hub. Release with ``.unclank``.
         if user is None:
             try:
@@ -4898,9 +5250,10 @@ class Clanktank(commands.Cog):
     @discord.app_commands.command(name="clank", description="Clank a member into the containment tank.")
     @discord.app_commands.guild_only()
     @discord.app_commands.describe(user="Member to clank", reason="Reason / context",
-                                   duration="Optional: 30m, 2h, 7d (blank = permanent)")
+                                   duration="Optional: 30m, 2h, 7d (blank = permanent)",
+                                   level="Containment depth 1-5 (1=education, 5=Clankermax; blank=1)")
     async def slash_clank(self, interaction: discord.Interaction, user: discord.Member,
-                          reason: str = "", duration: str = "") -> None:
+                          reason: str = "", duration: str = "", level: int = 0) -> None:
         """Clank a member into the containment tank."""
         if not await self._slash_mod_or_hunter(interaction):
             return
@@ -4909,16 +5262,19 @@ class Clanktank(commands.Cog):
             await interaction.followup.send("Cannot clank the bot itself.", ephemeral=True)
             return
         dur = _parse_duration(duration) if duration else None
+        entry_level = _clamp_level(level) if level else 1
         try:
             await self._do_clank(user, interaction.user, reason or None, dur,
-                                 defer_purge=True, allow_booster=True, manual=True)
+                                 defer_purge=True, allow_booster=True, manual=True,
+                                 entry_level=entry_level)
         except Exception:
             log.exception("clanktank: slash clank failed uid=%s", user.id)
             await interaction.followup.send(
                 "Failed to clank (check the bot's role hierarchy).", ephemeral=True)
             return
         await interaction.followup.send(
-            f"Clanked {user.mention}" + (f" for `{duration}`." if dur else "."),
+            f"Clanked {user.mention} at depth **L{entry_level}** ({_LEVEL_NAMES[entry_level]})"
+            + (f" for `{duration}`." if dur else "."),
             ephemeral=True)
 
     @discord.app_commands.command(name="unclank", description="Release a member from containment.")
@@ -4965,6 +5321,11 @@ class Clanktank(commands.Cog):
         duration_s: int | None = None
         dur_raw: str | None = None
         reason_parts: list[str] = list(args)
+        # Optional leading depth: `.clank @user 5 reason...` (1-5).
+        entry_level = 1
+        if reason_parts and reason_parts[0].isdigit() and 1 <= int(reason_parts[0]) <= 5:
+            entry_level = int(reason_parts[0])
+            reason_parts = reason_parts[1:]
         if reason_parts:
             parsed = _parse_duration(reason_parts[-1])
             if parsed is not None:
@@ -4982,6 +5343,7 @@ class Clanktank(commands.Cog):
                 defer_purge=True,
                 allow_booster=True,
                 manual=True,
+                entry_level=entry_level,
             )
         except ValueError as exc:
             await ctx.reply_error(str(exc))
@@ -5003,6 +5365,7 @@ class Clanktank(commands.Cog):
                 fields=[
                     ("User", f"{user.mention} ({user.id})"),
                     ("Moderator", ctx.author.mention),
+                    ("Depth", f"L{entry_level} ({_LEVEL_NAMES[entry_level]})"),
                     ("Duration", dur_label),
                     ("Reason", reason or "None provided"),
                     *([("Visit them", tank_ref)] if tank_ref else []),
@@ -5066,6 +5429,77 @@ class Clanktank(commands.Cog):
             delete_after=30.0,
         )
         await self._log_release(user.id, ctx.guild.id, final_rec, restored, ctx.author)
+
+    @clanker_group.command(name="level", aliases=["depth", "sink"])
+    @guild_only
+    async def clanker_level(self, ctx: DiscoContext, user: discord.Member, level: int) -> None:
+        """Move a contained user to a different depth: .clank level @user <1-5>."""
+        if not ctx.author.guild_permissions.manage_roles:
+            await ctx.reply_error("You need Manage Roles permission.")
+            return
+        if not await self.is_clanker(user.id, ctx.guild.id):
+            await ctx.reply_error(f"{user.mention} is not currently in the tank.")
+            return
+        new_level = _clamp_level(level)
+        rec = await self._get_record(user.id, ctx.guild.id)
+        old_level = _clamp_level(rec.get("level") or 1) if rec else 1
+        rust = int(rec.get("rust") or 0) if rec else 0
+        direction = "descend" if new_level > old_level else "ascend"
+        # Persist depth + Clankermax + modlog + board + animation.
+        await self._on_level_change(user.id, ctx.guild.id, old_level, new_level, direction, rust)
+        # Reset the active trial to the new level's first station.
+        await self._start_escape_room(user, force_new=True, send_intro=False, level=new_level)
+        await ctx.reply(
+            view=_v2(
+                "Depth Updated",
+                color=C_NAVY,
+                fields=[
+                    ("User", f"{user.mention} ({user.id})"),
+                    ("Depth", f"L{old_level} -> L{new_level} ({_LEVEL_NAMES[new_level]})"),
+                    ("Moderator", ctx.author.mention),
+                ],
+            ),
+            mention_author=False,
+        )
+
+    @clanker_group.command(name="tank", aliases=["board"])
+    @guild_only
+    async def clanker_tank(self, ctx: DiscoContext) -> None:
+        """Show the live Tank Board: who is in the tank and how deep."""
+        view = await self._render_tank_panel(ctx.guild.id)
+        await ctx.reply(view=view, mention_author=False)
+        # Also (re)post/refresh the persistent board in the tank channel.
+        asyncio.ensure_future(self._refresh_tank_board(ctx.guild.id))
+
+    @clanker_group.command(name="import", aliases=["register", "adopt"])
+    @guild_only
+    async def clanker_import(self, ctx: DiscoContext) -> None:
+        """Register legacy clankers: anyone already wearing the Clanker role who
+        predates this bot is adopted into the system at depth L3."""
+        if not ctx.author.guild_permissions.manage_guild:
+            await ctx.reply_error("You need Manage Server permission.")
+            return
+        role = await self._clanker_role(ctx.guild)
+        if role is None:
+            await ctx.reply_error(
+                f'No "{_CLANKER_ROLE_NAME}" role found. Run `.init` or set one first.')
+            return
+        n = await self._import_legacy_clankers(ctx.guild)
+        default_role = await self._default_restore_role(ctx.guild)
+        await ctx.reply(
+            view=_v2(
+                "Legacy Clanker Import",
+                color=C_NAVY,
+                fields=[
+                    ("Imported", f"{n} member(s) registered at L3 (STANDARD CONTAINMENT)"),
+                    ("Default restore role",
+                     default_role.mention if default_role else
+                     "none found -- set `.set clank_default_role @role` so releases restore something"),
+                    ("Next", "They get an escape room on their next message or `.clank escape`."),
+                ],
+            ),
+            mention_author=False,
+        )
 
     @clanker_group.command(name="list")
     @guild_only
@@ -5159,12 +5593,20 @@ class Clanktank(commands.Cog):
         currently_in = "No (left server)" if left_at else "Yes"
 
         _case_num = int(rec.get("case_num") or 0)
+        _lvl = _clamp_level(rec.get("level") or 1)
+        _entry = _clamp_level(rec.get("entry_level") or 1)
+        _rust = int(rec.get("rust") or 0)
+        _has_max = "Yes" if _lvl >= _CLANK_MAX_LEVEL else "No"
         await ctx.reply(
             view=_v2(
                 f"Clanktank: {user.display_name}",
                 color=C_NAVY,
                 fields=[
                     ("Case #", f"#{_case_num:06d}" if _case_num else "unassigned"),
+                    ("Depth", f"L{_lvl} ({_LEVEL_NAMES[_lvl]})  {_depth_ladder(_lvl)}"),
+                    ("Entry depth", f"L{_entry} ({_LEVEL_NAMES[_entry]})"),
+                    ("Rust", f"{_rust}/{_RUST_MAX}"),
+                    ("Clankermax", _has_max),
                     ("Account age", _age_str(user.created_at) if user.created_at else "?"),
                     ("Server join age", _age_str(user.joined_at) if user.joined_at else "?"),
                     ("Currently in server", currently_in),
@@ -5214,11 +5656,15 @@ class Clanktank(commands.Cog):
         currently_in = "No (left server)" if left_at else ("Yes" if member else "No (not in server)")
         er_row = await self._er_get(uid, ctx.guild.id)
         er_step = int(er_row.get("step") or 0) if er_row else None
-        er_status = (
-            "COMPLETE" if er_step is not None and er_step >= 8
-            else f"Station {er_step + 1} of 8" if er_step is not None
-            else "not started"
-        )
+        er_level = _clamp_level(er_row.get("level") or 1) if er_row else 1
+        if er_step is None:
+            er_status = "not started"
+        else:
+            _er_stations = _level_stations(er_level)
+            er_status = (
+                f"L{er_level} cleared" if er_step >= len(_er_stations)
+                else f"Depth L{er_level} -- Station {er_step + 1}/{len(_er_stations)}"
+            )
         await ctx.reply(
             view=_v2(
                 f"Case #{case_num:06d} -- {display}",
@@ -6395,7 +6841,7 @@ class Clanktank(commands.Cog):
             await self._do_clank(
                 member, ctx.author,
                 f"cluster cleave [{cluster_id}]", None,
-                defer_purge=True,
+                defer_purge=True, entry_level=5,
             )
             await self.bot.db.execute(
                 "UPDATE clanker_records SET cluster_id=$1 WHERE user_id=$2 AND guild_id=$3",
@@ -6977,7 +7423,8 @@ class Clanktank(commands.Cog):
         async def _clutch_one(pair) -> None:
             member, reason = pair
             await self._do_clank(
-                member, ctx.author, f"clutch scan ({reason})", None, defer_purge=True)
+                member, ctx.author, f"clutch scan ({reason})", None,
+                defer_purge=True, entry_level=4)
 
         result = await BulkRunner().run(to_clank, _clutch_one)
         clanked = result.succeeded
@@ -7368,7 +7815,7 @@ class Clanktank(commands.Cog):
         _notice = await ctx.reply(
             view=_v2(
                 color=C_INFO,
-                desc="run `.clank escape` to get the link to your escape room -- work through the 8 stations to request release. check your DMs if you missed the original link.",
+                desc="run `.clank escape` to get the link to your escape room -- clear each level of the tank to rise toward the surface and be released. check your DMs if you missed the original link.",
             ),
             mention_author=False,
             no_autodelete=True,
@@ -7569,7 +8016,14 @@ class Clanktank(commands.Cog):
             await ctx.reply_error(f"{user.mention} has no escape-room record.")
             return
         step = int(row.get("step") or 0)
-        station = "COMPLETE" if step >= 8 else f"Station {min(step + 1, 8)} of 8: {_ER_STEP_NAMES[min(step, 7)]}"
+        level = _clamp_level(row.get("level") or 1)
+        _stations = _level_stations(level)
+        if step >= len(_stations):
+            station = f"L{level} CLEARED"
+        else:
+            _key = _stations[step]
+            station = (f"Depth L{level} ({_LEVEL_NAMES[level]}) -- Station {step + 1}/{len(_stations)}: "
+                       f"{_STATION_DISPLAY_NAMES.get(_key, _key.upper())}")
         started = row.get("started_at")
         step_started = row.get("step_started_at")
         completed = row.get("completed_at")
@@ -8388,18 +8842,6 @@ _ER_EXAM_OPTS: tuple[tuple[str, str, bool], ...] = (
     ("D", "Post a referral link in the welcome channel for your totally legitimate exchange", False),
 )
 
-_ER_STEP_NAMES: tuple[str, ...] = (
-    "INTAKE PROCESSING",
-    "CHARGE REVIEW",
-    "HUMAN VERIFICATION",
-    "THE SACRED OATH",
-    "MANDATORY REFLECTION",
-    "THE PLEDGE",
-    "FINAL EXAMINATION",
-    "DM SECURITY CHECK",
-    "PROCEEDINGS COMPLETE",
-)
-
 _ER_WRONG_MATH: tuple[str, ...] = (
     "Incorrect. The Tank has noted this failure and updated your permanent record.",
     "That is not the correct answer. The correct answer exists. This was not it.",
@@ -8408,17 +8850,126 @@ _ER_WRONG_MATH: tuple[str, ...] = (
     "Ah. Bold. Confidently wrong, but bold.",
 )
 
-_ER_STEP_HINTS: tuple[str, ...] = (
-    "-# **Step 1 of 8** -- click **BEGIN INTAKE PROCESSING** below.",
-    "-# **Step 2 of 8** -- read your charges, then click **I ACKNOWLEDGE MY CRIMES**.",
-    "-# **Step 3 of 8** -- click **SUBMIT ANSWER** and type your answer as a whole number.",
-    "-# **Step 4 of 8** -- click **TYPE THE OATH** and type the Sacred Oath exactly (case insensitive).",
-    "-# **Step 5 of 8** -- wait for the processing timer, then click the button to continue.",
-    "-# **Step 6 of 8** -- click all four pledge buttons, then click **CONTINUE**.",
-    "-# **Step 7 of 8** -- select the correct answer to the multiple choice question.",
-    "-# **Step 8 of 8** -- turn off your DMs, then click **VERIFY DMs ARE OFF**.",
-    "-# **Complete** -- DMs verified. You are being released. You may close this.",
+
+# -- 5-level containment model -------------------------------------------------
+# A clanker is placed at a depth (1=shallow education .. 5=Clankermax). Each level
+# is a trial built from the station builders below; deeper levels stack more
+# stations and a longer reflection wait. Passing a level's last station rises one
+# level toward the surface (clearing L1 == release); failing a level's gate sinks
+# one level deeper (toward L5) and accrues rust, which lengthens deeper trials.
+_CLANK_MAX_LEVEL = 5
+_RUST_MAX = 10  # rust meter scale for the tank board
+
+_ER_LEVEL_STATIONS: dict[int, tuple[str, ...]] = {
+    1: ("education",),
+    2: ("intake", "math", "exam"),
+    3: ("intake", "charges", "math", "oath", "exam"),
+    4: ("intake", "charges", "math", "oath", "reflect", "pledge", "exam"),
+    5: ("intake", "charges", "math", "oath", "reflect", "pledge", "exam", "dms"),
+}
+
+_LEVEL_NAMES: dict[int, str] = {
+    1: "ORIENTATION",
+    2: "VERIFICATION",
+    3: "STANDARD CONTAINMENT",
+    4: "DEEP CONTAINMENT",
+    5: "CLANKERMAX",
+}
+
+_STATION_DISPLAY_NAMES: dict[str, str] = {
+    "education": "ORIENTATION",
+    "intake": "INTAKE PROCESSING",
+    "charges": "CHARGE REVIEW",
+    "math": "HUMAN VERIFICATION",
+    "oath": "THE SACRED OATH",
+    "reflect": "MANDATORY REFLECTION",
+    "pledge": "THE PLEDGE",
+    "exam": "FINAL EXAMINATION",
+    "dms": "DM SECURITY CHECK",
+    "complete": "PROCEEDINGS COMPLETE",
+}
+
+_ER_STATION_HINTS: dict[str, str] = {
+    "education": "-- read the rules panel above, then answer the etiquette question.",
+    "intake": "-- click **BEGIN INTAKE PROCESSING** below.",
+    "charges": "-- read your charges, then click **I ACKNOWLEDGE MY CRIMES**.",
+    "math": "-- click **SUBMIT ANSWER** and type your answer as a whole number.",
+    "oath": "-- click **TYPE THE OATH** and type the Sacred Oath exactly (case insensitive).",
+    "reflect": "-- wait for the reflection timer, then click the button to continue.",
+    "pledge": "-- click all the pledge buttons, then click **CONTINUE**.",
+    "exam": "-- select the correct answer to the multiple choice question.",
+    "dms": "-- turn off your DMs, then click **VERIFY DMs ARE OFF**.",
+}
+
+_ER_DESCEND_FLAVOR: tuple[str, ...] = (
+    "The floor gives way. You sink a level deeper into the tank. Rust creeps in.",
+    "WRONG. The hydraulics groan and you drop a level. The water is colder down here.",
+    "Containment tightens. You are pulled down toward Clankermax.",
+    "The Tank does not forgive. Down you go -- more rust, more time.",
 )
+_ER_ASCEND_FLAVOR: tuple[str, ...] = (
+    "A hatch opens above. You rise one level toward the surface.",
+    "Cleared. The water drains and you float upward. Daylight is closer.",
+    "The Tank loosens its grip. You ascend one level.",
+    "Progress. You climb toward freedom, rust flaking off as you go.",
+)
+
+_ER_EDU_QUESTION = (
+    "A stranger DMs you saying they can double any crypto you send them. "
+    "What is the correct move?"
+)
+_ER_EDU_OPTS: tuple[tuple[str, str, bool], ...] = (
+    ("A", "Send a small amount first, just to test if it really works", False),
+    ("B", "Ignore it and report the DM to the server staff", True),
+    ("C", "Ask them to double your friend's crypto too while they are at it", False),
+    ("D", "Share your seed phrase so they can deposit the doubled coins faster", False),
+)
+
+
+def _clamp_level(level: object) -> int:
+    try:
+        return max(1, min(_CLANK_MAX_LEVEL, int(level)))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 1
+
+
+def _level_stations(level: object) -> tuple[str, ...]:
+    return _ER_LEVEL_STATIONS.get(_clamp_level(level), _ER_LEVEL_STATIONS[_CLANK_MAX_LEVEL])
+
+
+def _reflect_wait(base_minutes: int, level: int, rust: int) -> int:
+    """Reflection wait for a level: deeper levels reflect longer, rust adds on
+    top. Clamped to 1..120 so a clanker can never be soft-locked behind a wait."""
+    return max(1, min(120, int(base_minutes) * _clamp_level(level) + int(rust)))
+
+
+def _er_hint(level: int, step: int) -> str:
+    """The per-station hint line shown above a clanker's escape view."""
+    stations = _level_stations(level)
+    if step >= len(stations):
+        return f"-# **Depth L{_clamp_level(level)} cleared** -- you are rising toward the surface."
+    key = stations[step]
+    tail = _ER_STATION_HINTS.get(key, "-- follow the instructions in the panel above.")
+    return f"-# **Depth L{_clamp_level(level)}/5 -- Station {step + 1}/{len(stations)}** {tail}"
+
+
+def _depth_ladder(level: int) -> str:
+    """Compact one-line depth indicator: surface on the left, floor on the right."""
+    level = _clamp_level(level)
+    cells = [f"[{lv}]" if lv == level else str(lv) for lv in range(1, _CLANK_MAX_LEVEL + 1)]
+    return "Surface " + "-".join(cells) + " Floor"
+
+
+def _depth_gauge(level: int) -> str:
+    """A vertical depth gauge for the tank board / animation frames."""
+    level = _clamp_level(level)
+    lines = ["```", "===== SURFACE / FREEDOM ====="]
+    for lv in range(1, _CLANK_MAX_LEVEL + 1):
+        tag = _LEVEL_NAMES[lv]
+        lines.append(f"  L{lv} {tag}  <<< HERE" if lv == level else f"  L{lv} {tag}")
+    lines.append("======= THE FLOOR (rust) =======")
+    lines.append("```")
+    return "\n".join(lines)
 
 
 class _ErMathModal(discord.ui.Modal, title="HUMAN VERIFICATION PROTOCOL 7-GAMMA"):
@@ -8455,7 +9006,9 @@ class _ErOathModal(discord.ui.Modal, title="THE SACRED OATH OF NON-SCAMMERY"):
 
 
 class _EscapeRoomView(discord.ui.LayoutView):
-    """The 7-station escape room. One persistent message per inmate, edited in place."""
+    """The multi-level escape gauntlet. One persistent message per inmate, edited
+    in place. ``_level`` is the current containment depth (1..5) and ``_step`` is
+    the station index within that level's trial (``_ER_LEVEL_STATIONS``)."""
 
     def __init__(
         self,
@@ -8466,6 +9019,7 @@ class _EscapeRoomView(discord.ui.LayoutView):
         username: str,
         step: int,
         step_data: dict | None = None,
+        level: int = 1,
     ) -> None:
         super().__init__(timeout=None)
         self._cog = cog
@@ -8473,7 +9027,11 @@ class _EscapeRoomView(discord.ui.LayoutView):
         self._gid = guild_id
         self._case = case_num
         self._name = username
-        self._step = step
+        self._level = _clamp_level(level)
+        # Clamp a possibly-stale step (e.g. a legacy flat 0..8 index) into this
+        # level's station range so a restored view never renders out of bounds.
+        _st = _level_stations(self._level)
+        self._step = step if isinstance(step, int) and 0 <= step < len(_st) else 0
         self._data: dict = step_data or {}
         self._rebuild()
 
@@ -8483,18 +9041,27 @@ class _EscapeRoomView(discord.ui.LayoutView):
         guild = self._cog.bot.get_guild(self._gid)
         return guild.name if guild else "Discoin"
 
+    def _stations(self) -> tuple[str, ...]:
+        return _level_stations(self._level)
+
     def _header(self) -> discord.ui.TextDisplay:
-        s = self._step
         title = f"{self._server_name()} Containment System"
-        if s >= 8:
+        stations = self._stations()
+        lvl = self._level
+        if self._step >= len(stations):
             return discord.ui.TextDisplay(
                 f"## {title}\n"
-                f"-# Case #{self._case:06d} -- {self._name} -- **PROCEEDINGS COMPLETE**"
+                f"-# Case #{self._case:06d} -- {self._name} -- **DEPTH L{lvl} CLEARED**\n"
+                f"-# {_depth_ladder(lvl)}"
             )
+        key = stations[self._step]
+        sname = _STATION_DISPLAY_NAMES.get(key, key.upper())
         return discord.ui.TextDisplay(
             f"## {title}\n"
             f"-# Case #{self._case:06d} -- {self._name} -- "
-            f"Station {s + 1} of 8: **{_ER_STEP_NAMES[s]}**"
+            f"Depth **L{lvl}/5** ({_LEVEL_NAMES[lvl]}) -- "
+            f"Station {self._step + 1}/{len(stations)}: **{sname}**\n"
+            f"-# {_depth_ladder(lvl)}"
         )
 
     @staticmethod
@@ -8503,11 +9070,89 @@ class _EscapeRoomView(discord.ui.LayoutView):
 
     def _rebuild(self) -> None:
         self.clear_items()
-        builders = [
-            self._build_0, self._build_1, self._build_2, self._build_3,
-            self._build_4, self._build_5, self._build_6, self._build_7, self._build_8,
+        builders = {
+            "education": self._build_education,
+            "intake": self._build_0,
+            "charges": self._build_1,
+            "math": self._build_2,
+            "oath": self._build_3,
+            "reflect": self._build_4,
+            "pledge": self._build_5,
+            "exam": self._build_6,
+            "dms": self._build_7,
+            "complete": self._build_8,
+        }
+        stations = self._stations()
+        key = stations[self._step] if 0 <= self._step < len(stations) else "complete"
+        self.add_item(builders[key]())
+
+    # ── Station: Education (Level 1 only) ─────────────────────────────────
+
+    def _build_education(self) -> discord.ui.Container:
+        srv = self._server_name()
+        rows: list[discord.ui.Item] = [
+            self._header(), self._sep(),
+            discord.ui.TextDisplay(
+                "**ORIENTATION -- THE SHALLOW END**\n\n"
+                f"You are in the shallowest part of the {srv} Clank Tank. You are most likely "
+                "not a scammer -- you just had not learned the rules yet. So here they are.\n\n"
+                "**Do**\n"
+                "- Be kind. Talk in the channels, not in people's DMs uninvited.\n"
+                "- Ask staff if you are unsure about something.\n"
+                "- Report scams and sketchy DMs to the moderators.\n\n"
+                "**Do not**\n"
+                "- DM members about crypto, wallets, giveaways, or 'investment opportunities'.\n"
+                "- Post referral links or 'free nitro' links.\n"
+                "- Ask anyone for their seed phrase, password, or 2FA codes.\n\n"
+                "**Safety**\n"
+                "- Real staff will NEVER DM you for your seed phrase, wallet, or crypto.\n"
+                "- If someone does, it is a scam. Block and report them.\n\n"
+                "Read that? Good. Answer one question and you walk free."
+            ),
+            self._sep(),
+            discord.ui.TextDisplay(f"**{_ER_EDU_QUESTION}**"),
+            self._sep(),
         ]
-        self.add_item(builders[min(self._step, 8)]())
+        for label, text, correct in _ER_EDU_OPTS:
+            btn = discord.ui.Button(
+                label=f"{label}) {text[:45]}" + ("..." if len(text) > 45 else ""),
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"er_edu{label}_{self._uid}",
+            )
+            btn.callback = self._make_edu_cb(correct)
+            rows.append(discord.ui.Section(
+                discord.ui.TextDisplay(f"-# **{label})** {text}"),
+                accessory=btn,
+            ))
+        return discord.ui.Container(*rows, accent_color=C_INFO)
+
+    def _make_edu_cb(self, correct: bool):
+        async def _cb(interaction: discord.Interaction) -> None:
+            if not await self._guard(interaction):
+                return
+            if correct:
+                await self._pass(interaction, {**self._data})
+                return
+            fails = int(self._data.get("edu_fails", 0)) + 1
+            if fails >= 3:
+                self._data = {k: v for k, v in self._data.items() if k != "edu_fails"}
+                await self._descend(interaction)
+                try:
+                    await interaction.followup.send(
+                        "That is the answer a clanker would pick. Deeper into the tank you go.",
+                        ephemeral=True,
+                    )
+                except Exception:
+                    pass
+                return
+            self._data = {**self._data, "edu_fails": fails}
+            await self._cog._er_save(self._uid, self._gid, step_data=self._data, level=self._level)
+            await interaction.response.send_message(
+                f"Not quite -- re-read the **Do / Do not** list above. "
+                f"({3 - fails} attempt(s) left before you sink)",
+                ephemeral=True,
+            )
+        return _cb
 
     # ── Station 0: Intake ─────────────────────────────────────────────────
 
@@ -8529,7 +9174,8 @@ class _EscapeRoomView(discord.ui.LayoutView):
                 "This is not personal. Well. It is a little personal.\n\n"
                 "You now have the opportunity to demonstrate that you are a real human being "
                 "and not an automated crypto wealth redistribution entity. "
-                "The escape process consists of **8 stations**. Each one is dumber than the last. "
+                f"This level's trial has **{len(self._stations())} station(s)**. "
+                "Clear them to rise toward the surface. Fail one and you sink deeper. "
                 "We are sorry about that.\n\n"
                 "**Keep your DMs open** for the duration of this process.\n"
                 "At the final station you will be required to **turn your DMs off** as a security measure. "
@@ -8549,7 +9195,8 @@ class _EscapeRoomView(discord.ui.LayoutView):
         if not await self._guard(interaction):
             return
         charges = list(random.choice(_ER_CHARGES))
-        await self._advance(interaction, 1, {"charges": charges, "math_idx": random.randrange(len(_ER_MATH))})
+        await self._pass(interaction, {**self._data, "charges": charges,
+                                       "math_idx": random.randrange(len(_ER_MATH))})
 
     # ── Station 1: Charges ────────────────────────────────────────────────
 
@@ -8585,7 +9232,7 @@ class _EscapeRoomView(discord.ui.LayoutView):
     async def _cb_ack_charges(self, interaction: discord.Interaction) -> None:
         if not await self._guard(interaction):
             return
-        await self._advance(interaction, 2, {**self._data})
+        await self._pass(interaction, {**self._data})
 
     # ── Station 2: Math ───────────────────────────────────────────────────
 
@@ -8628,27 +9275,29 @@ class _EscapeRoomView(discord.ui.LayoutView):
         _, expected = _ER_MATH[idx]
         given = raw.lstrip("$").replace(",", "").replace(" ", "").strip()
         if given == expected:
-            await self._advance(interaction, 3, {**self._data})
-        else:
-            fails = int(self._data.get("math_fails", 0)) + 1
-            self._data = {**self._data, "math_fails": fails}
-            if fails >= 3:
-                await self._advance(interaction, 0, {})
-                try:
-                    await interaction.channel.send(  # type: ignore[union-attr]
-                        f"{self._name}: three wrong answers. "
-                        "The Tank does not do extra credit. **Returning to intake.**"
-                    )
-                except Exception:
-                    pass
-            else:
-                self._rebuild()
-                await interaction.response.edit_message(view=self)
-                await interaction.followup.send(
-                    random.choice(_ER_WRONG_MATH) + f" ({3 - fails} attempt(s) remaining)",
-                    ephemeral=True,
+            await self._pass(interaction, {**self._data})
+            return
+        fails = int(self._data.get("math_fails", 0)) + 1
+        if fails >= 3:
+            # Math is the canonical gate -- three strikes sinks them a level deeper.
+            self._data = {k: v for k, v in self._data.items() if k != "math_fails"}
+            try:
+                await interaction.channel.send(  # type: ignore[union-attr]
+                    f"{self._name}: three wrong answers. "
+                    "The Tank does not do extra credit. **Sinking deeper.**"
                 )
-            await self._cog._er_save(self._uid, self._gid, step_data=self._data)
+            except Exception:
+                pass
+            await self._descend(interaction)
+            return
+        self._data = {**self._data, "math_fails": fails}
+        self._rebuild()
+        await interaction.response.edit_message(view=self)
+        await interaction.followup.send(
+            random.choice(_ER_WRONG_MATH) + f" ({3 - fails} attempt(s) remaining)",
+            ephemeral=True,
+        )
+        await self._cog._er_save(self._uid, self._gid, step_data=self._data, level=self._level)
 
     # ── Station 3: Oath ───────────────────────────────────────────────────
 
@@ -8694,10 +9343,12 @@ class _EscapeRoomView(discord.ui.LayoutView):
         import re as _re
         normalized = " ".join(_re.sub(r"[^a-z0-9 ]", "", raw.lower()).split())
         if normalized == _ER_OATH_CANONICAL:
-            wait_mins = await self._cog._escape_wait_minutes(self._gid)
+            base = await self._cog._escape_wait_minutes(self._gid)
+            rust = int(self._data.get("rust", 0))
+            wait_mins = _reflect_wait(base, self._level, rust)
             wait_until = time.time() + wait_mins * 60
-            await self._advance(
-                interaction, 4,
+            await self._pass(
+                interaction,
                 {**self._data, "wait_until": wait_until, "wait_mins": wait_mins},
             )
         else:
@@ -8710,7 +9361,7 @@ class _EscapeRoomView(discord.ui.LayoutView):
                 "Check your spelling and try again.",
                 ephemeral=True,
             )
-            await self._cog._er_save(self._uid, self._gid, step_data=self._data)
+            await self._cog._er_save(self._uid, self._gid, step_data=self._data, level=self._level)
 
     # ── Station 4: Waiting Room ───────────────────────────────────────────
 
@@ -8771,7 +9422,7 @@ class _EscapeRoomView(discord.ui.LayoutView):
             except Exception:
                 pass
             return
-        await self._advance(interaction, 5, {**self._data, "pledged": []})
+        await self._pass(interaction, {**self._data, "pledged": []})
 
     # ── Station 5: Pledge ─────────────────────────────────────────────────
 
@@ -8828,13 +9479,13 @@ class _EscapeRoomView(discord.ui.LayoutView):
             self._data = {**self._data, "pledged": pledged}
             self._rebuild()
             await interaction.response.edit_message(view=self)
-            await self._cog._er_save(self._uid, self._gid, step_data=self._data)
+            await self._cog._er_save(self._uid, self._gid, step_data=self._data, level=self._level)
         return _cb
 
     async def _cb_pledges_done(self, interaction: discord.Interaction) -> None:
         if not await self._guard(interaction):
             return
-        await self._advance(interaction, 6, {**self._data})
+        await self._pass(interaction, {**self._data})
 
     # ── Station 6: Final Exam ─────────────────────────────────────────────
 
@@ -8867,7 +9518,7 @@ class _EscapeRoomView(discord.ui.LayoutView):
             if not await self._guard(interaction):
                 return
             if correct:
-                await self._advance(interaction, 7, {**self._data})
+                await self._pass(interaction, {**self._data})
             else:
                 await interaction.response.send_message(
                     "Incorrect. That answer is, concerning, not the right one. "
@@ -8891,7 +9542,7 @@ class _EscapeRoomView(discord.ui.LayoutView):
             discord.ui.TextDisplay(
                 "**DM SECURITY VERIFICATION**\n"
                 "FINAL CLEARANCE STATION\n\n"
-                "You have completed all 7 puzzle stations. One last step.\n\n"
+                "You have completed this level's stations. One last step.\n\n"
                 "As a security measure, you must **turn off your DMs** from server members before "
                 "you can be released. This protects you from scammers who target recently-cleared users.\n\n"
                 "**How to turn off DMs:**\n"
@@ -8936,11 +9587,11 @@ class _EscapeRoomView(discord.ui.LayoutView):
                 ephemeral=True,
             )
         except discord.Forbidden:
-            # DM failed -- DMs are off. Pass.
-            await self._advance(interaction, 8, {**self._data})
+            # DM failed -- DMs are off. Pass this station (clears the level).
+            await self._pass(interaction, {**self._data})
         except Exception:
             # Unknown error -- be lenient and pass.
-            await self._advance(interaction, 8, {**self._data})
+            await self._pass(interaction, {**self._data})
 
     # ── Station 8: Complete ───────────────────────────────────────────────
 
@@ -8950,7 +9601,7 @@ class _EscapeRoomView(discord.ui.LayoutView):
             discord.ui.TextDisplay(
                 "**PROCEEDINGS COMPLETE**\n\n"
                 f"Congratulations, {self._name}.\n\n"
-                "You have completed all 8 stations including the DM security check. "
+                "You have climbed all the way to the surface of the Clank Tank. "
                 "You have been certified as **Probably Human**.\n\n"
                 "Your roles are being restored. You are free.\n\n"
                 "Your DMs are off -- keep them that way. "
@@ -8973,32 +9624,82 @@ class _EscapeRoomView(discord.ui.LayoutView):
             return False
         return True
 
-    async def _advance(
-        self,
-        interaction: discord.Interaction,
-        next_step: int,
-        next_data: dict,
-    ) -> None:
-        # Preserve persistent keys across step transitions.
-        merged: dict = {}
-        for _k in ("hint_msg_id", "username"):
-            if _k in self._data:
-                merged[_k] = self._data[_k]
+    # Persistent step_data keys that survive every transition (the rest is
+    # per-attempt scratch -- math/oath/edu fail counters, pledge progress, etc.)
+    _PERSIST_KEYS = ("hint_msg_id", "ping_msg_id", "username", "rust")
+
+    def _carry(self, src: dict | None = None) -> dict:
+        src = self._data if src is None else src
+        return {k: src[k] for k in self._PERSIST_KEYS if k in src}
+
+    async def _goto(self, interaction: discord.Interaction, next_step: int, next_data: dict) -> None:
+        """Move to another station WITHIN the current level and persist."""
+        merged = self._carry()
         merged.update(next_data)
         self._step = next_step
         self._data = merged
         self._rebuild()
         await interaction.response.edit_message(view=self)
-        await self._cog._er_save(self._uid, self._gid, step=next_step, step_data=merged)
-        asyncio.ensure_future(self._cog._er_update_hint(self._uid, self._gid, next_step))
-        if next_step == 4:
+        await self._cog._er_save(
+            self._uid, self._gid, step=next_step, step_data=merged, level=self._level)
+        asyncio.ensure_future(
+            self._cog._er_update_hint(self._uid, self._gid, self._level, next_step))
+        stations = self._stations()
+        if next_step < len(stations) and stations[next_step] == "reflect":
             wait_until = float(merged.get("wait_until", 0.0))
             if wait_until > time.time():
                 asyncio.ensure_future(
-                    self._cog._schedule_station4_refresh(self._uid, self._gid, wait_until)
-                )
-        if next_step == 8:
+                    self._cog._schedule_station4_refresh(self._uid, self._gid, wait_until))
+
+    async def _pass(self, interaction: discord.Interaction, next_data: dict | None = None) -> None:
+        """Pass the current station: advance within the level, or ascend if it was
+        the level's last station."""
+        nd = dict(self._data) if next_data is None else next_data
+        if self._step + 1 >= len(self._stations()):
+            await self._ascend(interaction, nd)
+        else:
+            await self._goto(interaction, self._step + 1, nd)
+
+    async def _ascend(self, interaction: discord.Interaction, next_data: dict | None = None) -> None:
+        """Level cleared. Rise one level toward the surface; clearing L1 releases."""
+        nd = dict(self._data) if next_data is None else next_data
+        if self._level <= 1:
+            # Surface reached -- show the release panel and auto-release.
+            self._step = len(self._stations())
+            self._data = self._carry(nd)
+            self._rebuild()
+            await interaction.response.edit_message(view=self)
             asyncio.ensure_future(self._cog._er_on_complete(self._uid, self._gid))
+            return
+        old_level = self._level
+        new_level = old_level - 1
+        keep = self._carry(nd)
+        self._level = new_level
+        self._step = 0
+        self._data = keep
+        self._rebuild()
+        await interaction.response.edit_message(view=self)
+        await self._cog._er_save(self._uid, self._gid, step=0, step_data=keep, level=new_level)
+        asyncio.ensure_future(self._cog._er_update_hint(self._uid, self._gid, new_level, 0))
+        asyncio.ensure_future(self._cog._on_level_change(
+            self._uid, self._gid, old_level, new_level, "ascend", int(keep.get("rust", 0))))
+
+    async def _descend(self, interaction: discord.Interaction) -> None:
+        """Failed a level's gate. Sink one level deeper (capped at L5) and rust++."""
+        old_level = self._level
+        new_level = min(_CLANK_MAX_LEVEL, old_level + 1)
+        rust = int(self._data.get("rust", 0)) + 1
+        keep = self._carry()
+        keep["rust"] = rust
+        self._level = new_level
+        self._step = 0
+        self._data = keep
+        self._rebuild()
+        await interaction.response.edit_message(view=self)
+        await self._cog._er_save(self._uid, self._gid, step=0, step_data=keep, level=new_level)
+        asyncio.ensure_future(self._cog._er_update_hint(self._uid, self._gid, new_level, 0))
+        asyncio.ensure_future(self._cog._on_level_change(
+            self._uid, self._gid, old_level, new_level, "descend", rust))
 
 
 async def setup(bot: Discoin) -> None:

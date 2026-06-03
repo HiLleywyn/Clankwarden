@@ -60,9 +60,12 @@
           { "key": "CLANKTANK_CHANNEL_ID", "type": "discord_channel", "label": "Clanktank channel", "help": "Channel clankers are confined to." },
           { "key": "CLANKTANK_LOG_CHANNEL_ID", "type": "discord_channel", "label": "Clanker log channel", "help": "Log for containment (clank/escape) events." },
           { "key": "CLANK_ESCAPE_THREAD_ID", "type": "discord_channel", "label": "Escape-room thread", "help": "Shared thread where escape-room cases are posted." },
-          { "key": "CLANK_ESCAPE_WAIT_MINUTES", "type": "number", "label": "Reflection period (minutes)", "default": 5, "min": 1, "max": 120, "help": "Mandatory reflection wait before an escape unlocks." },
+          { "key": "CLANK_ESCAPE_WAIT_MINUTES", "type": "number", "label": "Reflection period (minutes)", "default": 5, "min": 1, "max": 120, "help": "Base mandatory reflection wait; deeper containment levels multiply it." },
           { "key": "CLANKER_HUNTER_ROLE_ID", "type": "discord_role", "label": "Clanker hunter role", "help": "Members of this role can report scammers in the hunter channel." },
-          { "key": "CLANKER_HUNTER_CHANNEL_ID", "type": "discord_channel", "label": "Clanker hunter channel", "help": "Channel where hunters post reports that auto-clank flagged users." }
+          { "key": "CLANKER_HUNTER_CHANNEL_ID", "type": "discord_channel", "label": "Clanker hunter channel", "help": "Channel where hunters post reports that auto-clank flagged users." },
+          { "key": "CLANKERMAX_ROLE_ID", "type": "discord_role", "label": "Clankermax role", "help": "Added when a clanker sinks to depth L5 (confirmed scammer); removed when they rise above L5. Auto-created by name if unset." },
+          { "key": "CLANK_DEFAULT_ROLE_ID", "type": "discord_role", "label": "Default restore role", "help": "Safe baseline role handed back when a legacy clanker (with no stored roles) is released. Falls back to a role named User/Member." },
+          { "key": "CLANK_TANK_BOARD", "type": "boolean", "label": "Tank Board + animations", "default": true, "help": "Public depth board in the clanktank channel and descent/ascent animations on level changes." }
         ]
       },
       {
