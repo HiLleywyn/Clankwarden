@@ -1431,6 +1431,28 @@ class Clanktank(commands.Cog):
             return []
         return _as_str_list(s.get("name_blacklist"))
 
+    async def _chat_level(self, guild_id: int, user_id: int) -> int | None:
+        """Best-effort chat level from a leveling bot that shares this database.
+
+        Clankwarden ships no leveling system, so the ``chat_levels`` table only
+        exists when another bot on the same DB provides it. Returns ``None`` when
+        the table is absent (so callers can tell "no leveling system" apart from
+        "level 0") and never lets a missing table crash a command."""
+        if getattr(self, "_chat_levels_missing", False):
+            return None
+        try:
+            val = await self.bot.db.fetch_val(
+                "SELECT level FROM chat_levels WHERE guild_id=$1 AND user_id=$2",
+                guild_id, user_id,
+            )
+        except Exception:
+            # Cache the absence so we do not re-run a failing query (and spam logs)
+            # on every cleave/clarion. A leveling bot would create the table at
+            # startup, before Clankwarden serves these admin commands.
+            self._chat_levels_missing = True
+            return None
+        return int(val) if val is not None else 0
+
     async def _is_hunter(self, member: discord.Member | None, guild_id: int) -> bool:
         """True if ``member`` holds the configured clanker-hunter role.
 
@@ -7048,11 +7070,8 @@ class Clanktank(commands.Cog):
             if p.manage_roles or p.manage_messages or p.administrator:
                 skipped_protected.append(str(member))
                 continue
-            level = await self.bot.db.fetch_val(
-                "SELECT level FROM chat_levels WHERE guild_id=$1 AND user_id=$2",
-                ctx.guild.id, m_uid,
-            )
-            if level and int(level) >= 30:
+            level = await self._chat_level(ctx.guild.id, m_uid)
+            if level is not None and level >= 30:
                 skipped_protected.append(f"{member} (lvl {level})")
                 continue
             to_clank.append(member)
@@ -8170,12 +8189,11 @@ class Clanktank(commands.Cog):
             await ctx.reply_error("You need Manage Roles permission.")
             return
 
-        level_val = await self.bot.db.fetch_val(
-            "SELECT level FROM chat_levels WHERE guild_id=$1 AND user_id=$2",
-            ctx.guild.id, ctx.author.id,
-        )
-        level = int(level_val or 0)
-        if level < 15:
+        # The level gate only applies when a leveling bot shares this DB; with no
+        # chat_levels table (Clankwarden ships none) the command stays usable for
+        # the mods who already pass the Manage Roles check above.
+        level = await self._chat_level(ctx.guild.id, ctx.author.id)
+        if level is not None and level < 15:
             await ctx.reply_error(f"Clarion requires level 15+. You are level {level}.")
             return
 
