@@ -44,6 +44,7 @@ GUILD_FIELDS: tuple[GuildField, ...] = (
     GuildField("scam_hunter_role", "discord_role", "Clanker hunter role", "Members of this role can report scammers in the hunter channel."),
     GuildField("scam_report_channel", "discord_channel", "Clanker hunter channel", "Channel where hunters post reports that auto-clank flagged users."),
     GuildField("clankermax_role", "discord_role", "Clankermax role", "Added when a clanker sinks to depth L5 (confirmed scammer); removed when they rise above L5."),
+    GuildField("name_blacklist", "string", "Join-name blacklist", "Comma-separated name patterns. Anyone who joins with a name containing one is auto-clanked to L5 (Clankermax). Case-insensitive substring match.", max_len=2000),
     GuildField("clank_default_role", "discord_role", "Default restore role", "Safe baseline role handed back when a legacy clanker (no stored roles) is released."),
     GuildField("clank_tank_board", "bool", "Tank Board + animations", "Public depth board in the clanktank channel plus descent/ascent animations on level changes."),
     GuildField("dehoist_enabled", "bool", "Smart dehoist enabled", "Scan members against this server's impersonation signals and act automatically."),
