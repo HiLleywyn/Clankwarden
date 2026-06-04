@@ -253,6 +253,7 @@ _GUILD_KEY_ALIASES: dict[str, str] = {
     "CLANKER_HUNTER_ROLE_ID": "scam_hunter_role",
     "CLANKER_HUNTER_CHANNEL_ID": "scam_report_channel",
     "CLANKERMAX_ROLE_ID": "clankermax_role",
+    "NAME_BLACKLIST": "name_blacklist",
     "CLANK_DEFAULT_ROLE_ID": "clank_default_role",
     "CLANK_TANK_BOARD": "clank_tank_board",
     "MOD_LOG_CHANNEL_ID": "mod_log_channel",

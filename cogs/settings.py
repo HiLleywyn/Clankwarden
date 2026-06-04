@@ -38,6 +38,59 @@ def _role(guild: discord.Guild, rid) -> str:
     return r.mention if r else f"`{rid}` (missing)"
 
 
+def _coerce_ids(raw) -> list[int]:
+    """Best-effort list-of-ids from a JSON list, a single id, or a separated string."""
+    if isinstance(raw, (list, tuple)):
+        items = raw
+    elif isinstance(raw, str):
+        items = [p for p in raw.replace(",", " ").split()]
+    elif raw:
+        items = [raw]
+    else:
+        items = []
+    out: list[int] = []
+    for it in items:
+        try:
+            v = int(str(it).strip())
+        except (TypeError, ValueError):
+            continue
+        if v and v not in out:
+            out.append(v)
+    return out
+
+
+def _hunter_channels(guild: discord.Guild, s: dict) -> str:
+    """Render the merged hunter report channel list (multi + legacy single)."""
+    ids = _coerce_ids(s.get("scam_report_channels"))
+    primary = s.get("scam_report_channel")
+    if primary:
+        try:
+            pid = int(primary)
+            if pid and pid not in ids:
+                ids.insert(0, pid)
+        except (TypeError, ValueError):
+            pass
+    if not ids:
+        return "_not set_"
+    return ", ".join(_chan(guild, c) for c in ids)
+
+
+def _blacklist_summary(s: dict) -> str:
+    raw = s.get("name_blacklist")
+    if isinstance(raw, str):
+        patterns = [p.strip() for p in raw.replace("\n", ",").split(",") if p.strip()]
+    elif isinstance(raw, (list, tuple)):
+        patterns = [str(p).strip() for p in raw if str(p).strip()]
+    else:
+        patterns = []
+    if not patterns:
+        return "_none_ (manage with `.clank blacklist`)"
+    preview = ", ".join(f"`{p}`" for p in patterns[:5])
+    if len(patterns) > 5:
+        preview += f" +{len(patterns) - 5} more"
+    return f"{len(patterns)} pattern(s): {preview}"
+
+
 class Settings(ModCog):
     @commands.command(name="settings", aliases=["config", "cfg"])
     @commands.has_guild_permissions(manage_guild=True)
@@ -71,7 +124,8 @@ class Settings(ModCog):
             .text(
                 "### Clanker hunters\n"
                 f"**Hunter role**  {_role(g, s.get('scam_hunter_role'))}\n"
-                f"**Hunter channel**  {_chan(g, s.get('scam_report_channel'))}"
+                f"**Hunter channel(s)**  {_hunter_channels(g, s)}\n"
+                f"**Name blacklist**  {_blacklist_summary(s)}"
             )
             .separator()
             .text(
@@ -97,7 +151,9 @@ class Settings(ModCog):
                 f"`modlog`, `clankerrole`, `clankermax`, `defaultrole`, `category`, "
                 f"`tank`, `tankboard`, `clankerlog`, `escapethread`, `reflection`, "
                 f"`hunterrole`, `hunterchannel`, `autodelete`, `autodeleteinfo`. "
-                f"Dehoist options live under `{p}dehoist`. Use `none` to clear. "
+                f"Dehoist options live under `{p}dehoist`; the join-name blacklist "
+                f"and extra hunter channels live under `{p}clank blacklist` / "
+                f"`{p}clank hunter`. Use `none` to clear. "
                 f"Everything here is also editable in the web UI."
             )
         )
@@ -162,8 +218,12 @@ class Settings(ModCog):
 
     @set_grp.command(name="hunterchannel", aliases=["reportchannel"])
     async def set_hunterchannel(self, ctx: DiscoContext, channel: str) -> None:
-        """Set the clanker-hunter report channel."""
+        """Set the (primary) clanker-hunter report channel. For several channels
+        use `.clank hunter channel #a #b`."""
         await self._set_channel(ctx, "scam_report_channel", channel, "Hunter channel")
+        # This single-channel setter is authoritative: drop any extra channels so
+        # what the operator just set is exactly the report channel.
+        await self.db.update_guild_setting(ctx.guild.id, "scam_report_channels", [])
 
     # -- roles ----------------------------------------------------------------
 

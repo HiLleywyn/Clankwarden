@@ -1,5 +1,33 @@
 # Changelog
 
+## [clankwarden] -- 2026-06-04
+
+### Clanker hunters -- multiple report channels
+- **Several hunter channels.** The scam-report channel is no longer a single
+  channel. Set as many as you like with `.clank hunter channel #a #b #c`, and
+  add/remove individually with `.clank hunter addchannel #c` /
+  `.clank hunter removechannel #c`. A hunter's report is accepted in ANY
+  configured channel. The legacy single-channel setting (`.set hunterchannel`,
+  `CLANKER_HUNTER_CHANNEL_ID`) still works and is treated as the primary channel.
+
+### Containment -- join-name blacklist
+- **Auto-clank by name pattern.** Operators can blacklist name patterns; anyone
+  who joins with a name CONTAINING one (case-insensitive, punctuation/spacing
+  ignored) is auto-clanked straight to **Level 5 (Clankermax)**. Manage with
+  `.clank blacklist add <text>`, `.clank blacklist remove <text>`,
+  `.clank blacklist list`, and `.clank blacklist clear`. Also editable from the
+  web UI / control plane via the new `NAME_BLACKLIST` setting (comma-separated).
+
+### Containment -- Clankermax role fixes
+- **The L5 role now reliably applies.** Reaching Level 5 (naturally, via
+  `.clank level @user 5`, via `.clank @user 5`, or `/clank ... level:5`) applies
+  the Clankermax role deterministically instead of fire-and-forget. If the bot
+  cannot assign it -- because it is missing Manage Roles or its own role sits
+  below the Clankermax role -- the command now tells the moderator exactly how to
+  fix it instead of silently doing nothing. Re-running `.clank level @user 5`
+  also repairs a missing role on someone already at L5, and an uncached member is
+  fetched so the L5 boundary toggle is never skipped.
+
 ## [clankwarden] -- 2026-06-03
 
 ### Containment -- 5-level Clank Tank

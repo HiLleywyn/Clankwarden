@@ -52,7 +52,7 @@ import random
 import re
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Sequence
+from typing import Any, Sequence
 
 import discord
 from discord.ext import commands, tasks
@@ -91,6 +91,16 @@ log = logging.getLogger(__name__)
 
 _CLANKER_ROLE_NAME = "Clanker"
 _CLANKERMAX_ROLE_NAME = "Clankermax"
+
+# Abuse cap on the per-guild join-name blacklist (operator-managed list).
+_NAME_BLACKLIST_MAX = 200
+
+# Operator-facing hint shown when the Clankermax role could not be applied.
+_CLANKERMAX_FAIL_HINT = (
+    "Could not apply the Clankermax role. Give the bot **Manage Roles** and "
+    "drag the bot's role ABOVE the Clankermax role in Server Settings > Roles, "
+    "then re-run the command."
+)
 # Default role names tried (in order) when restoring a legacy clanker who has no
 # stored roles -- a safe baseline so unclank gives them something back.
 _DEFAULT_RESTORE_ROLE_NAMES = ("User", "Member", "Members")
@@ -609,6 +619,80 @@ def _text_similarity(a: str, b: str) -> float:
     if not ta or not tb:
         return 0.0
     return len(ta & tb) / len(ta | tb)
+
+
+def _as_str_list(raw: Any) -> list[str]:
+    """Coerce a stored setting into a clean, de-duplicated list of strings.
+
+    Accepts a JSON list (what the Discord commands store) or a comma/newline
+    separated string (what the web UI / API store), so both surfaces agree.
+    """
+    if not raw:
+        return []
+    if isinstance(raw, str):
+        parts: list[Any] = re.split(r"[,\n]", raw)
+    elif isinstance(raw, (list, tuple)):
+        parts = list(raw)
+    else:
+        return []
+    out: list[str] = []
+    for p in parts:
+        s = str(p).strip()
+        if s and s not in out:
+            out.append(s)
+    return out
+
+
+def _as_int_list(raw: Any) -> list[int]:
+    """Coerce a stored setting into a de-duplicated list of ints (channel ids).
+
+    Accepts a JSON list, a single id, or a separated string."""
+    if isinstance(raw, (list, tuple)):
+        items: list[Any] = list(raw)
+    elif isinstance(raw, str):
+        items = re.split(r"[,\s]+", raw)
+    elif raw:
+        items = [raw]
+    else:
+        items = []
+    out: list[int] = []
+    for it in items:
+        try:
+            v = int(str(it).strip())
+        except (TypeError, ValueError):
+            continue
+        if v and v not in out:
+            out.append(v)
+    return out
+
+
+def _name_blacklist_hit(names: set[str], patterns: list[str]) -> str | None:
+    """Return the first operator-blacklisted pattern that matches any of ``names``.
+
+    Matching is case-insensitive and tests each pattern as a substring of both
+    the raw name AND the name with every non-alphanumeric character stripped, so
+    spacing/punctuation tricks ("s.c.a.m", "S c a m") still hit the pattern
+    "scam". A leading/trailing ``*`` is tolerated (a bare pattern already matches
+    as a substring, so wildcards are rarely needed).
+    """
+    if not patterns:
+        return None
+    cleaned: list[str] = []
+    for p in patterns:
+        core = (p or "").strip().strip("*").lower()
+        if core:
+            cleaned.append(core)
+    if not cleaned:
+        return None
+    for name in names:
+        if not name:
+            continue
+        low = name.lower()
+        stripped = re.sub(r"[^a-z0-9]", "", low)
+        for core in cleaned:
+            if core in low or (stripped and core in stripped):
+                return core
+    return None
 
 
 def _scam_name_hit(names: set[str]) -> str | None:
@@ -1312,6 +1396,41 @@ class Clanktank(commands.Cog):
         except Exception:
             return 0
 
+    async def _scam_report_channel_ids(
+        self, guild_id: int, settings: dict | None = None
+    ) -> list[int]:
+        """Every channel where hunter reports are accepted, de-duplicated.
+
+        Merges the multi-channel list (``scam_report_channels``) with the legacy
+        single ``scam_report_channel`` (kept as the first/primary entry) so an
+        operator can configure one or many and both old and new config keep
+        working.
+        """
+        s = settings
+        if s is None:
+            try:
+                s = await self.bot.db.get_guild_settings(int(guild_id))
+            except Exception:
+                return []
+        ids = _as_int_list(s.get("scam_report_channels"))
+        primary = s.get("scam_report_channel")
+        if primary:
+            try:
+                pid = int(primary)
+            except (TypeError, ValueError):
+                pid = 0
+            if pid and pid not in ids:
+                ids.insert(0, pid)
+        return ids
+
+    async def _name_blacklist(self, guild_id: int) -> list[str]:
+        """Operator-configured join-name blacklist patterns (match -> auto-clank L5)."""
+        try:
+            s = await self.bot.db.get_guild_settings(int(guild_id))
+        except Exception:
+            return []
+        return _as_str_list(s.get("name_blacklist"))
+
     async def _is_hunter(self, member: discord.Member | None, guild_id: int) -> bool:
         """True if ``member`` holds the configured clanker-hunter role.
 
@@ -1442,27 +1561,61 @@ class Clanktank(commands.Cog):
             pass
         return role
 
-    async def _set_clankermax(self, member: discord.Member | None, on: bool) -> None:
-        """Add/remove the Clankermax role (best-effort, idempotent). The base
+    @staticmethod
+    def _can_assign_role(guild: discord.Guild, role: discord.Role) -> bool:
+        """True if the bot can actually add/remove ``role`` for a member.
+
+        A missing Manage Roles permission, or a Clankermax role positioned at or
+        ABOVE the bot's own top role, makes ``add_roles`` raise Forbidden -- the
+        single most common reason "I set the Clankermax role but nothing happens".
+        Check it up front so callers can surface a clear fix instead of a silent
+        no-op.
+        """
+        me = guild.me
+        if me is None:
+            return False
+        if not me.guild_permissions.manage_roles:
+            return False
+        return role < me.top_role
+
+    async def _set_clankermax(self, member: discord.Member | None, on: bool) -> bool:
+        """Add/remove the Clankermax role (idempotent). Returns True when the
+        desired state was achieved, False when an op failed (e.g. the bot lacks
+        Manage Roles or its top role sits below the Clankermax role). The base
         Clanker role and all enforcement are unaffected -- this is purely the L5
         tier marker."""
         if member is None:
-            return
+            return False
         guild = member.guild
         try:
             if on:
                 role = await self._ensure_clankermax_role(guild)
-                if role and role not in member.roles:
-                    await member.add_roles(role, reason="Clanktank: reached depth L5 (Clankermax)")
+                if role is None:
+                    return False
+                if role in member.roles:
+                    return True
+                if not self._can_assign_role(guild, role):
+                    log.warning(
+                        "clanktank: cannot assign Clankermax role uid=%s gid=%s -- bot "
+                        "lacks Manage Roles or its top role is not above %r",
+                        member.id, guild.id, role.name,
+                    )
+                    return False
+                await member.add_roles(role, reason="Clanktank: reached depth L5 (Clankermax)")
+                return True
             else:
                 role = await self._clankermax_role(guild)
-                if role and role in member.roles:
-                    await member.remove_roles(role, reason="Clanktank: rose above depth L5")
+                if role is None or role not in member.roles:
+                    return True
+                await member.remove_roles(role, reason="Clanktank: rose above depth L5")
+                return True
         except discord.Forbidden:
             log.warning("clanktank: Clankermax role op forbidden (hierarchy) uid=%s gid=%s",
                         member.id, guild.id)
+            return False
         except Exception:
-            log.debug("clanktank: Clankermax role op failed uid=%s", member.id)
+            log.debug("clanktank: Clankermax role op failed uid=%s", member.id, exc_info=True)
+            return False
 
     async def _default_restore_role(self, guild: discord.Guild) -> discord.Role | None:
         """The safe baseline role handed back to a legacy clanker on release (they
@@ -1497,6 +1650,12 @@ class Clanktank(commands.Cog):
             pass
         guild = self.bot.get_guild(gid)
         member = guild.get_member(uid) if guild else None
+        if member is None and guild is not None:
+            # An uncached member would silently skip the L5 role toggle below.
+            try:
+                member = await guild.fetch_member(uid)
+            except Exception:
+                member = None
         # Clankermax role at the L5 boundary.
         if new_level >= _CLANK_MAX_LEVEL and old_level < _CLANK_MAX_LEVEL:
             await self._set_clankermax(member, True)
@@ -2947,10 +3106,10 @@ class Clanktank(commands.Cog):
         except Exception:
             return
 
-        report_ch = s.get("scam_report_channel")
-        if not report_ch:
+        report_chs = await self._scam_report_channel_ids(gid, settings=s)
+        if not report_chs:
             return
-        if int(getattr(message.channel, "id", 0) or 0) != int(report_ch):
+        if int(getattr(message.channel, "id", 0) or 0) not in report_chs:
             return
 
         # Role-based: the reporter must currently hold the configured hunter
@@ -3400,6 +3559,34 @@ class Clanktank(commands.Cog):
             names = {member.name, member.display_name}
             age_str = _age_str(member.created_at) if member.created_at else "?"
             actor = member.guild.me
+
+            # -- Pass 0: operator name blacklist (highest priority, -> L5) --------
+            bl_hit = _name_blacklist_hit(names, await self._name_blacklist(gid))
+            if bl_hit and actor:
+                try:
+                    await self._do_clank(
+                        member, actor,
+                        f"Auto-clank: blacklisted name pattern ({bl_hit!r})",
+                        None, defer_purge=True, entry_level=5,
+                    )
+                    await self._log_mod(gid, _v2(
+                        "Auto-Clank: Blacklisted Name",
+                        color=C_WARNING,
+                        fields=[
+                            ("User", f"{member} ({uid})"),
+                            ("Account age", age_str),
+                            ("Matched pattern", bl_hit),
+                            ("Names", ", ".join(names)),
+                        ],
+                        footer="Automatic containment -- name matched a server blacklist pattern.",
+                    ))
+                    await self._audit(
+                        "auto_clank_name_blacklist", gid, user_id=uid,
+                        details={"pattern": bl_hit, "names": list(names), "account_age": age_str},
+                    )
+                except Exception:
+                    log.exception("clanktank: name-blacklist auto-clank failed uid=%s", uid)
+                return
 
             # -- Pass 1a: scam-keyword auto-clank (aggressive, no review needed) --
             scam_kw = _scam_name_hit(names)
@@ -4255,8 +4442,10 @@ class Clanktank(commands.Cog):
         )
         self._clanked.add((uid, gid))
         # Confirmed-scammer tier gets the Clankermax role layered on top of Clanker.
+        # Apply it inline (not fire-and-forget) so callers can tell the operator
+        # immediately if role hierarchy/permissions blocked it.
         if entry_level >= _CLANK_MAX_LEVEL:
-            asyncio.ensure_future(self._set_clankermax(member, True))
+            await self._set_clankermax(member, True)
         try:
             await self.bot.modlog.clanktank(
                 "clank_placed", gid, target=member,
@@ -5312,9 +5501,14 @@ class Clanktank(commands.Cog):
             await interaction.followup.send(
                 "Failed to clank (check the bot's role hierarchy).", ephemeral=True)
             return
+        warn = ""
+        if entry_level >= _CLANK_MAX_LEVEL:
+            member = interaction.guild.get_member(user.id) if interaction.guild else None
+            if not await self._set_clankermax(member or user, True):
+                warn = "\n\n:warning: " + _CLANKERMAX_FAIL_HINT
         await interaction.followup.send(
             f"Clanked {user.mention} at **Level {entry_level}** ({_LEVEL_NAMES[entry_level]})"
-            + (f" for `{duration}`." if dur else "."),
+            + (f" for `{duration}`." if dur else ".") + warn,
             ephemeral=True)
 
     @discord.app_commands.command(name="unclank", description="Release a member from containment.")
@@ -5396,6 +5590,14 @@ class Clanktank(commands.Cog):
             await ctx.reply_error("Failed to apply containment. Check bot role hierarchy.")
             return
 
+        # Tell the operator if the L5 (Clankermax) role could not be applied
+        # (re-check is idempotent: _do_clank already applied it on success).
+        warn_fields: list[tuple[str, str]] = []
+        if entry_level >= _CLANK_MAX_LEVEL:
+            member = ctx.guild.get_member(user.id) or user
+            if not await self._set_clankermax(member, True):
+                warn_fields.append(("Warning", _CLANKERMAX_FAIL_HINT))
+
         _tank_id = await self._guild_channel_id(ctx.guild.id, "clanktank_channel", Config.CLANKTANK_CHANNEL_ID)
         tank_ref = f"<#{_tank_id}>" if _tank_id else None
         await ctx.reply(
@@ -5409,6 +5611,7 @@ class Clanktank(commands.Cog):
                     ("Duration", dur_label),
                     ("Reason", reason or "None provided"),
                     *([("Visit them", tank_ref)] if tank_ref else []),
+                    *warn_fields,
                 ],
             ),
             mention_author=False,
@@ -5488,6 +5691,15 @@ class Clanktank(commands.Cog):
         direction = "up" if new_level > old_level else "down"
         # Persist level + Clankermax + modlog + board + animation.
         await self._on_level_change(user.id, ctx.guild.id, old_level, new_level, direction, rust)
+        # Reconcile the L5 (Clankermax) role to the new level. Done explicitly
+        # (not just at the boundary in _on_level_change) so re-running this command
+        # also REPAIRS a missing role when the user was already at L5, and so we can
+        # tell the moderator when hierarchy/permissions blocked it.
+        warn_fields: list[tuple[str, str]] = []
+        member = ctx.guild.get_member(user.id) or user
+        applied = await self._set_clankermax(member, new_level >= _CLANK_MAX_LEVEL)
+        if new_level >= _CLANK_MAX_LEVEL and not applied:
+            warn_fields.append(("Warning", _CLANKERMAX_FAIL_HINT))
         # Reset the active trial to the new level's first station.
         await self._start_escape_room(user, force_new=True, send_intro=False, level=new_level)
         await ctx.reply(
@@ -5498,6 +5710,7 @@ class Clanktank(commands.Cog):
                     ("User", f"{user.mention} ({user.id})"),
                     ("Level", f"L{old_level} -> L{new_level} ({_LEVEL_NAMES[new_level]})"),
                     ("Moderator", ctx.author.mention),
+                    *warn_fields,
                 ],
             ),
             mention_author=False,
@@ -7166,8 +7379,8 @@ class Clanktank(commands.Cog):
             await ctx.reply_error("You need Manage Roles permission.")
             return
         s        = await self.bot.db.get_guild_settings(ctx.guild.id)
-        ch_id    = s.get("scam_report_channel")
-        ch_str   = f"<#{ch_id}>" if ch_id else "not configured"
+        ch_ids   = await self._scam_report_channel_ids(ctx.guild.id, settings=s)
+        ch_str   = ", ".join(f"<#{c}>" for c in ch_ids) if ch_ids else "not configured"
         role_id  = await self._hunter_role_id(ctx.guild.id)
         role     = ctx.guild.get_role(role_id) if role_id else None
         if role_id and role:
@@ -7181,38 +7394,101 @@ class Clanktank(commands.Cog):
                 "Clanker Hunter Settings",
                 color=C_AMBER,
                 fields=[
-                    ("Report channel", ch_str),
+                    ("Report channel(s)", ch_str),
                     ("Hunter role", role_str),
                 ],
-                footer="Set with .clank hunter channel #channel -- .clank hunter role @role. "
-                       "Anyone wearing the role can report in the channel.",
+                footer="Set with .clank hunter channel #a #b -- .clank hunter role @role "
+                       "(add/remove single channels with .clank hunter addchannel / "
+                       "removechannel). Anyone wearing the role can report in any channel.",
             ),
             mention_author=False,
         )
 
-    @clanker_hunter_group.command(name="channel")
+    async def _save_hunter_channels(self, guild_id: int, ids: list[int]) -> None:
+        """Persist the hunter report channel list, keeping the legacy single
+        ``scam_report_channel`` key in sync (first entry) for back-compat."""
+        ids = _as_int_list(ids)
+        await self.bot.db.update_guild_setting(guild_id, "scam_report_channels", ids)
+        await self.bot.db.update_guild_setting(
+            guild_id, "scam_report_channel", ids[0] if ids else None)
+
+    @clanker_hunter_group.command(name="channel", aliases=["channels", "setchannel"])
     @guild_only
     async def clanker_hunter_channel(
-        self, ctx: DiscoContext, channel: discord.TextChannel | None = None
+        self, ctx: DiscoContext, *channels: discord.TextChannel
     ) -> None:
-        """Set or clear the scam report channel. Omit channel to clear."""
+        """Set the scam report channel(s). Pass one or more channels; omit all to
+        clear. Hunters may post reports in ANY configured channel."""
         if not ctx.author.guild_permissions.manage_roles:
             await ctx.reply_error("You need Manage Roles permission.")
             return
-        new_id = channel.id if channel else None
-        await self.bot.db.update_guild_setting(ctx.guild.id, "scam_report_channel", new_id)
-        if channel:
+        ids = _as_int_list([c.id for c in channels])
+        await self._save_hunter_channels(ctx.guild.id, ids)
+        if ids:
+            mlist = ", ".join(f"<#{c}>" for c in ids)
             await ctx.reply_success(
-                f"Scam report channel set to {channel.mention}. "
-                "Members of the hunter role who post user IDs or @mentions there "
-                "will trigger automatic clanking.",
-                title="Hunter Channel Set",
+                f"Scam report channel(s) set to {mlist}. "
+                "Members of the hunter role who post user IDs or @mentions in any "
+                "of them will trigger automatic clanking.",
+                title="Hunter Channels Set",
             )
         else:
-            await ctx.reply_success("Scam report channel cleared.", title="Hunter Channel Cleared")
+            await ctx.reply_success(
+                "Scam report channels cleared.", title="Hunter Channels Cleared")
         log.info(
-            "clanktank: hunter channel set ch=%s gid=%s actor=%s",
-            new_id, ctx.guild.id, ctx.author.id,
+            "clanktank: hunter channels set ch=%s gid=%s actor=%s",
+            ids, ctx.guild.id, ctx.author.id,
+        )
+
+    @clanker_hunter_group.command(name="addchannel", aliases=["addch", "add"])
+    @guild_only
+    async def clanker_hunter_addchannel(
+        self, ctx: DiscoContext, *channels: discord.TextChannel
+    ) -> None:
+        """Add one or more channels to the scam report channel list."""
+        if not ctx.author.guild_permissions.manage_roles:
+            await ctx.reply_error("You need Manage Roles permission.")
+            return
+        if not channels:
+            await ctx.reply_error("Mention at least one channel to add.")
+            return
+        ids = await self._scam_report_channel_ids(ctx.guild.id)
+        before = len(ids)
+        for c in channels:
+            if c.id not in ids:
+                ids.append(c.id)
+        if len(ids) == before:
+            await ctx.reply_error("Those channels are already in the hunter list.")
+            return
+        await self._save_hunter_channels(ctx.guild.id, ids)
+        await ctx.reply_success(
+            "Hunter channels: " + ", ".join(f"<#{c}>" for c in ids),
+            title="Hunter Channel Added",
+        )
+
+    @clanker_hunter_group.command(name="removechannel", aliases=["removech", "rmch", "remove"])
+    @guild_only
+    async def clanker_hunter_removechannel(
+        self, ctx: DiscoContext, *channels: discord.TextChannel
+    ) -> None:
+        """Remove one or more channels from the scam report channel list."""
+        if not ctx.author.guild_permissions.manage_roles:
+            await ctx.reply_error("You need Manage Roles permission.")
+            return
+        if not channels:
+            await ctx.reply_error("Mention at least one channel to remove.")
+            return
+        ids = await self._scam_report_channel_ids(ctx.guild.id)
+        drop = {c.id for c in channels}
+        kept = [c for c in ids if c not in drop]
+        if len(kept) == len(ids):
+            await ctx.reply_error("None of those channels were in the hunter list.")
+            return
+        await self._save_hunter_channels(ctx.guild.id, kept)
+        await ctx.reply_success(
+            ("Hunter channels: " + ", ".join(f"<#{c}>" for c in kept)) if kept
+            else "Scam report channels cleared.",
+            title="Hunter Channel Removed",
         )
 
     @clanker_hunter_group.command(name="role")
@@ -7261,18 +7537,149 @@ class Clanktank(commands.Cog):
         lines = [f"<@{m.id}> -- {m.display_name}" for m in members[:50]]
         if len(members) > 50:
             lines.append(f"...and {len(members) - 50} more")
-        s_ch   = await self.bot.db.get_guild_settings(ctx.guild.id)
-        ch_id  = s_ch.get("scam_report_channel")
-        ch_str = f"<#{ch_id}>" if ch_id else "not configured"
+        ch_ids = await self._scam_report_channel_ids(ctx.guild.id)
+        ch_str = ", ".join(f"<#{c}>" for c in ch_ids) if ch_ids else "not configured"
         await ctx.reply(
             view=_v2(
                 f"Clanker Hunters ({len(members)})",
                 color=C_AMBER,
                 desc="\n".join(lines),
-                fields=[("Hunter role", role.mention), ("Report channel", ch_str)],
+                fields=[("Hunter role", role.mention), ("Report channel(s)", ch_str)],
             ),
             mention_author=False,
         )
+
+    # -- name blacklist group -------------------------------------------------
+
+    async def _show_blacklist(self, ctx: DiscoContext) -> None:
+        patterns = await self._name_blacklist(ctx.guild.id)
+        p = ctx.prefix or "."
+        if patterns:
+            body = "\n".join(f"- `{pat}`" for pat in patterns[:100])
+            if len(patterns) > 100:
+                body += f"\n-# ...and {len(patterns) - 100} more"
+        else:
+            body = f"_No patterns set._ Add one with `{p}clank blacklist add <text>`."
+        await ctx.reply(
+            view=_v2(
+                f"Name Blacklist ({len(patterns)})",
+                color=C_AMBER,
+                desc=body,
+                footer=("Any member who joins with a name CONTAINING one of these "
+                        "patterns (case-insensitive) is auto-clanked to Level 5 "
+                        f"(Clankermax). Manage with {p}clank blacklist add/remove/clear."),
+            ),
+            mention_author=False,
+        )
+
+    @clanker_group.group(
+        name="blacklist", aliases=["nameblacklist", "namebl", "names"],
+        invoke_without_command=True,
+    )
+    @guild_only
+    async def clanker_blacklist_group(self, ctx: DiscoContext) -> None:
+        """Show the join-name blacklist (a match auto-clanks to L5/Clankermax)."""
+        if not ctx.author.guild_permissions.manage_guild:
+            await ctx.reply_error("You need Manage Server permission.")
+            return
+        await self._show_blacklist(ctx)
+
+    @clanker_blacklist_group.command(name="add")
+    @guild_only
+    async def clanker_blacklist_add(self, ctx: DiscoContext, *, pattern: str) -> None:
+        """Add name pattern(s): .clank blacklist add <text> (comma-separate many)."""
+        if not ctx.author.guild_permissions.manage_guild:
+            await ctx.reply_error("You need Manage Server permission.")
+            return
+        new = [p.strip() for p in re.split(r"[,\n]", pattern) if p.strip()]
+        if not new:
+            await ctx.reply_error("Give a pattern to blacklist.")
+            return
+        patterns = await self._name_blacklist(ctx.guild.id)
+        added: list[str] = []
+        skipped_short = False
+        for n in new:
+            if len(n.strip("*")) < 2:
+                skipped_short = True
+                continue
+            if not any(n.lower() == ex.lower() for ex in patterns):
+                patterns.append(n)
+                added.append(n)
+        if len(patterns) > _NAME_BLACKLIST_MAX:
+            patterns = patterns[:_NAME_BLACKLIST_MAX]
+        if not added:
+            msg = "Those patterns are already blacklisted"
+            msg += " (and some were too short -- 2+ chars)." if skipped_short else "."
+            await ctx.reply_error(msg)
+            return
+        await self.bot.db.update_guild_setting(ctx.guild.id, "name_blacklist", patterns)
+        await self._blacklist_logcfg(
+            ctx, f"added {', '.join(repr(a) for a in added)}")
+        note = ", ".join(f"`{a}`" for a in added)
+        extra = "\n-# Some entries were skipped (too short -- 2+ chars)." if skipped_short else ""
+        await ctx.reply_success(
+            f"Added: {note}\nThe blacklist now has **{len(patterns)}** pattern(s).{extra}",
+            title="Name Blacklist Updated",
+        )
+
+    @clanker_blacklist_group.command(name="remove", aliases=["rm", "delete", "del"])
+    @guild_only
+    async def clanker_blacklist_remove(self, ctx: DiscoContext, *, pattern: str) -> None:
+        """Remove name pattern(s): .clank blacklist remove <text> (comma-separate many)."""
+        if not ctx.author.guild_permissions.manage_guild:
+            await ctx.reply_error("You need Manage Server permission.")
+            return
+        targets = {p.strip().lower() for p in re.split(r"[,\n]", pattern) if p.strip()}
+        if not targets:
+            await ctx.reply_error("Give a pattern to remove.")
+            return
+        patterns = await self._name_blacklist(ctx.guild.id)
+        kept = [p for p in patterns if p.lower() not in targets]
+        removed = len(patterns) - len(kept)
+        if not removed:
+            await ctx.reply_error("None of those patterns were blacklisted.")
+            return
+        await self.bot.db.update_guild_setting(ctx.guild.id, "name_blacklist", kept)
+        await self._blacklist_logcfg(ctx, f"removed {removed} pattern(s)")
+        await ctx.reply_success(
+            f"Removed **{removed}** pattern(s). The blacklist now has "
+            f"**{len(kept)}** pattern(s).",
+            title="Name Blacklist Updated",
+        )
+
+    @clanker_blacklist_group.command(name="list", aliases=["show"])
+    @guild_only
+    async def clanker_blacklist_list(self, ctx: DiscoContext) -> None:
+        """List every blacklisted join-name pattern."""
+        if not ctx.author.guild_permissions.manage_guild:
+            await ctx.reply_error("You need Manage Server permission.")
+            return
+        await self._show_blacklist(ctx)
+
+    @clanker_blacklist_group.command(name="clear", aliases=["reset", "wipe"])
+    @guild_only
+    async def clanker_blacklist_clear(self, ctx: DiscoContext) -> None:
+        """Clear the entire join-name blacklist."""
+        if not ctx.author.guild_permissions.manage_guild:
+            await ctx.reply_error("You need Manage Server permission.")
+            return
+        await self.bot.db.update_guild_setting(ctx.guild.id, "name_blacklist", [])
+        await self._blacklist_logcfg(ctx, "cleared")
+        await ctx.reply_success("Name blacklist cleared.", title="Name Blacklist Cleared")
+
+    async def _blacklist_logcfg(self, ctx: DiscoContext, what: str) -> None:
+        """Best-effort mod-log entry for a blacklist change."""
+        modlog = getattr(self.bot, "modlog", None)
+        if modlog is None:
+            return
+        try:
+            await modlog.config(
+                "config.name_blacklist", ctx.guild.id, actor=ctx.author,
+                summary=f"Join-name blacklist {what}.",
+                metadata={"change": what},
+            )
+        except Exception:
+            pass
 
     # -- clamp command group --------------------------------------------------
 
@@ -8734,8 +9141,16 @@ class _ClampSettingsView(discord.ui.LayoutView):
 
         ch_ids   = self.settings.get("clamp_channel_ids") or []
         ch_str   = " ".join(f"<#{c}>" for c in ch_ids) if ch_ids else "all channels"
-        scam_ch  = self.settings.get("scam_report_channel")
-        scam_str = f"<#{scam_ch}>" if scam_ch else "not set"
+        scam_chs = _as_int_list(self.settings.get("scam_report_channels"))
+        _primary = self.settings.get("scam_report_channel")
+        if _primary:
+            try:
+                _pid = int(_primary)
+            except (TypeError, ValueError):
+                _pid = 0
+            if _pid and _pid not in scam_chs:
+                scam_chs.insert(0, _pid)
+        scam_str = ", ".join(f"<#{c}>" for c in scam_chs) if scam_chs else "not set"
 
         rows: list[discord.ui.Item] = [
             discord.ui.TextDisplay("## Clanktank Clamp Settings"),
@@ -8759,7 +9174,7 @@ class _ClampSettingsView(discord.ui.LayoutView):
             discord.ui.Separator(spacing=discord.SeparatorSpacing.small),
             discord.ui.TextDisplay(
                 f"-# Guard channels: {ch_str}\n"
-                f"-# Scam report channel: {scam_str}\n"
+                f"-# Scam report channel(s): {scam_str}\n"
                 f"-# Changes apply instantly."
             ),
         ])
