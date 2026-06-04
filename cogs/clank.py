@@ -4419,7 +4419,10 @@ class Clanktank(commands.Cog):
                VALUES ($1, $2, $8, $3, $4, $4, $5, $6, $7, $9, $9, 0, now())
                ON CONFLICT (user_id, guild_id) DO UPDATE
                SET case_num              = $8,
-                   stored_roles          = $3,
+                   stored_roles          = CASE
+                       WHEN COALESCE(array_length(clanker_records.stored_roles, 1), 0) > 0
+                       THEN clanker_records.stored_roles
+                       ELSE $3 END,
                    reason                = $4,
                    clank_context         = $4,
                    clanked_at            = now(),
@@ -4789,13 +4792,39 @@ class Clanktank(commands.Cog):
                 # Strip the Clankermax tier role too (best-effort, idempotent).
                 await self._set_clankermax(member, False)
                 stored_ids: set[int] = set(rec.get("stored_roles") or []) if rec else set()
-                to_restore = [r for r in guild.roles if r.id in stored_ids]
-                if to_restore:
+                me = guild.me
+                # Only roles the bot can actually grant: skip managed roles (booster /
+                # bot / integration roles -- Discord re-adds those itself and rejects
+                # manual assignment) and anything at or above the bot's top role.
+                assignable = [
+                    r for r in guild.roles
+                    if r.id in stored_ids and not r.managed and not r.is_default()
+                    and (me is not None and r < me.top_role)
+                ]
+                if assignable:
                     try:
-                        await member.add_roles(*to_restore, reason="Clanktank: restoring roles")
-                        restored = to_restore
+                        await member.add_roles(*assignable, reason="Clanktank: restoring roles")
+                        restored = assignable
+                    except discord.Forbidden:
+                        # add_roles is atomic -- one bad role fails the whole batch.
+                        # Fall back to per-role so the rest are still handed back.
+                        for r in assignable:
+                            try:
+                                await member.add_roles(r, reason="Clanktank: restoring roles")
+                                restored.append(r)
+                            except Exception:
+                                log.warning(
+                                    "clanktank: could not restore role %s uid=%s gid=%s",
+                                    r.id, user_id, guild_id)
                     except Exception:
                         log.warning("clanktank: role restore failed uid=%s", user_id)
+                skipped = [r for r in guild.roles
+                           if r.id in stored_ids and r not in restored and not r.is_default()]
+                if skipped:
+                    log.info(
+                        "clanktank: %d stored role(s) not restored uid=%s gid=%s "
+                        "(managed or above the bot's top role): %s",
+                        len(skipped), user_id, guild_id, [r.id for r in skipped])
 
         asyncio.ensure_future(self._er_cleanup(user_id, guild_id))
         await self._save_to_history(user_id, guild_id, rec)

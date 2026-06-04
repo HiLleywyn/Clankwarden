@@ -605,13 +605,17 @@ class _DehoistAlert(discord.ui.LayoutView):
         if clank is None or not hasattr(clank, "warden_contain"):
             await interaction.response.send_message("Clank cog unavailable.", ephemeral=True)
             return
+        # Defer the component update first: containment can take longer than the
+        # 3s interaction window, which would otherwise fail the click outright.
+        await interaction.response.defer()
         try:
             await clank.warden_contain(self.member, reason="Mod clank from dehoist alert")
             self.clanked = True
             self._build(True, "alert")
-            await interaction.response.edit_message(view=self)
+            await interaction.edit_original_response(view=self)
         except Exception:
-            await interaction.response.send_message("Clank failed.", ephemeral=True)
+            log.exception("dehoist: alert-clank failed target=%s", self.member.id)
+            await interaction.followup.send("Clank failed.", ephemeral=True)
 
 
 class _ReportAlert(discord.ui.LayoutView):
@@ -658,11 +662,18 @@ class _ReportAlert(discord.ui.LayoutView):
         if clank is None or not hasattr(clank, "warden_contain"):
             await interaction.response.send_message("Clank cog unavailable.", ephemeral=True)
             return
+        # Containment hits the gateway several times (role edits, DB, purge), which
+        # can exceed Discord's 3s interaction window -- defer first so the token
+        # stays valid and the click never shows "This interaction failed".
+        await interaction.response.defer(ephemeral=True)
         try:
             await clank.warden_contain(self.target, reason=f"Clank from report by {interaction.user}")
-            await interaction.response.send_message(f"Clanked {self.target.mention}.", ephemeral=True)
+            await interaction.followup.send(f"Clanked {self.target.mention}.", ephemeral=True)
+        except ValueError as exc:
+            await interaction.followup.send(f"Couldn't clank: {exc}", ephemeral=True)
         except Exception:
-            await interaction.response.send_message("Clank failed.", ephemeral=True)
+            log.exception("dehoist: report-clank failed target=%s", self.target.id)
+            await interaction.followup.send("Clank failed (check the bot's role hierarchy).", ephemeral=True)
 
     async def _false(self, interaction: discord.Interaction) -> None:
         """False report: clank the *reporter* for 30 minutes."""
@@ -672,14 +683,22 @@ class _ReportAlert(discord.ui.LayoutView):
             await interaction.response.send_message(
                 "Can't action that (reporter left, or clank cog unavailable).", ephemeral=True)
             return
+        # Defer before the (slow) containment path so the interaction does not
+        # expire mid-clank -- otherwise the follow-up reply 404s and Discord shows
+        # "This interaction failed".
+        await interaction.response.defer(ephemeral=True)
         try:
             await clank.warden_contain(
                 member, reason=f"False scam report (marked by {interaction.user})",
                 duration_s=1800)
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 f"Marked false -- clanked {member.mention} for 30 minutes.", ephemeral=True)
+        except ValueError as exc:
+            await interaction.followup.send(f"Couldn't clank the reporter: {exc}", ephemeral=True)
         except Exception:
-            await interaction.response.send_message("Couldn't clank the reporter.", ephemeral=True)
+            log.exception("dehoist: false-report clank failed reporter=%s", member.id)
+            await interaction.followup.send(
+                "Couldn't clank the reporter (check the bot's role hierarchy).", ephemeral=True)
 
 
 class _DehoistConfig(discord.ui.LayoutView):
