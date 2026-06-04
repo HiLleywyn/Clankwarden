@@ -9,6 +9,13 @@
   interaction window the button showed "This interaction failed". They now defer
   the interaction first and reply via a follow-up, and surface the real reason
   (e.g. immunity / role hierarchy) instead of a generic failure.
+- **Releasing a clanker reliably restores their roles.** Two gaps are fixed:
+  re-clanking someone already in the tank no longer overwrites their saved
+  roles with an empty set (the original roles are preserved on the saved
+  record), and role restoration on release no longer fails as an all-or-nothing
+  batch -- managed roles (booster/bot/integration) and roles above the bot are
+  skipped, and the remaining roles are handed back one-by-one so a single
+  un-assignable role can't block the rest.
 
 ### Clanker hunters -- multiple report channels
 - **Several hunter channels.** The scam-report channel is no longer a single
