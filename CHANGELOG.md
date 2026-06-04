@@ -2,6 +2,14 @@
 
 ## [clankwarden] -- 2026-06-04
 
+### Fixes
+- **Scammer-report buttons no longer fail.** The "Clank", "False report (30m)",
+  and dehoist-alert "Clank" buttons ran the full containment path before
+  acknowledging the click, so when containment took longer than Discord's 3s
+  interaction window the button showed "This interaction failed". They now defer
+  the interaction first and reply via a follow-up, and surface the real reason
+  (e.g. immunity / role hierarchy) instead of a generic failure.
+
 ### Clanker hunters -- multiple report channels
 - **Several hunter channels.** The scam-report channel is no longer a single
   channel. Set as many as you like with `.clank hunter channel #a #b #c`, and
