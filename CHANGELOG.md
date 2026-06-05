@@ -3,6 +3,13 @@
 ## [clankwarden] -- 2026-06-04
 
 ### Fixes
+- **`.clank cluster cleave` and `.clank taunt` no longer crash.** Both queried a
+  `chat_levels` table that only exists when a separate leveling bot shares the
+  database -- Clankwarden ships no leveling system, so the commands failed with
+  `relation "chat_levels" does not exist`. The level lookup is now best-effort:
+  when the table is absent the level-based protections/gates are simply skipped
+  (the commands remain mod-gated), and they work normally when the table is
+  present.
 - **Scammer-report buttons no longer fail.** The "Clank", "False report (30m)",
   and dehoist-alert "Clank" buttons ran the full containment path before
   acknowledging the click, so when containment took longer than Discord's 3s
