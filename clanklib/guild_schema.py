@@ -47,6 +47,7 @@ GUILD_FIELDS: tuple[GuildField, ...] = (
     GuildField("name_blacklist", "string", "Join-name blacklist", "Comma-separated name patterns. Anyone who joins with a name containing one is auto-clanked to L5 (Clankermax). Case-insensitive substring match.", max_len=2000),
     GuildField("clank_default_role", "discord_role", "Default restore role", "Safe baseline role handed back when a legacy clanker (no stored roles) is released."),
     GuildField("clank_tank_board", "bool", "Tank Board + animations", "Public depth board in the clanktank channel plus descent/ascent animations on level changes."),
+    GuildField("security_pause_dms", "bool", "Auto Pause DMs (Security Action)", "Keep Discord's server-wide 'Pause DMs' security action permanently on. Discord caps each pause at 24h; the bot re-arms it automatically so you enable it once and forget it. Requires the bot to have Manage Server."),
     GuildField("dehoist_enabled", "bool", "Smart dehoist enabled", "Scan members against this server's impersonation signals and act automatically."),
     GuildField("dehoist_mode", "string", "Dehoist mode", "off, warn, rename, or rename_clank (rename the impersonator AND auto-clank them).", max_len=12),
     GuildField("dehoist_floor_role", "discord_role", "Dehoist floor role", "Only members at or below this role are eligible; staff/trusted roles are never touched."),

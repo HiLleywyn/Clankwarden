@@ -118,7 +118,8 @@ class Settings(ModCog):
                 f"**Clanker log channel**  {_chan(g, s.get('clanktank_log_channel'))}\n"
                 f"**Escape-room thread**  {_chan(g, s.get('clank_escape_thread'))}\n"
                 f"**Reflection period**  `{s.get('clank_escape_wait_minutes') or 5} min` (x depth)\n"
-                f"**Tank Board**  {'on' if s.get('clank_tank_board', True) else 'off'}"
+                f"**Tank Board**  {'on' if s.get('clank_tank_board', True) else 'off'}\n"
+                f"**Auto Pause DMs**  {'on' if s.get('security_pause_dms') else 'off'}"
             )
             .separator()
             .text(
@@ -149,7 +150,7 @@ class Settings(ModCog):
             .text(
                 f"-# Edit with `{p}set <option> <value>` -- options: `prefix`, `log`, "
                 f"`modlog`, `clankerrole`, `clankermax`, `defaultrole`, `category`, "
-                f"`tank`, `tankboard`, `clankerlog`, `escapethread`, `reflection`, "
+                f"`tank`, `tankboard`, `pausedms`, `clankerlog`, `escapethread`, `reflection`, "
                 f"`hunterrole`, `hunterchannel`, `autodelete`, `autodeleteinfo`. "
                 f"Dehoist options live under `{p}dehoist`; the join-name blacklist "
                 f"and extra hunter channels live under `{p}clank blacklist` / "
@@ -262,6 +263,18 @@ class Settings(ModCog):
         await self._logcfg(ctx, "Tank Board", "on" if truthy else "off")
         await send_v2(ctx, Container(accent_color=C_SUCCESS).text(
             f"Tank Board + animations turned **{'on' if truthy else 'off'}**."))
+
+    @set_grp.command(name="pausedms", aliases=["pausedm", "securitydms", "dmpause"])
+    async def set_pausedms(self, ctx: DiscoContext, value: str) -> None:
+        """Toggle the auto Pause DMs security action (on/off). When on, the bot
+        keeps Discord's server-wide 'Pause DMs' armed and re-arms the 24h window
+        automatically. Delegates to `.clank pausedms` for the live arm/disarm."""
+        clank = self.bot.get_cog("Clanktank")
+        if clank is None or not hasattr(clank, "clanker_pausedms"):
+            await send_v2(ctx, Container(accent_color=C_ERROR).text(
+                "Containment is not loaded; cannot toggle Pause DMs."))
+            return
+        await ctx.invoke(clank.clanker_pausedms, value=value)
 
     # -- numbers --------------------------------------------------------------
 

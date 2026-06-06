@@ -1,5 +1,24 @@
 # Changelog
 
+## [clankwarden] -- 2026-06-06
+
+### Security actions -- auto Pause DMs
+- **Set-and-forget "Pause DMs".** Discord's server-wide "Pause DMs" security
+  action caps each pause at 24 hours; Clankwarden can now keep it permanently
+  armed. Turn it on with `.clank pausedms on` (or `.set pausedms on`, or the web
+  UI) and the bot re-arms the 24h window automatically so it never lapses --
+  `.clank pausedms off` lifts it, and `.clank pausedms` with no argument reports
+  the current state. Requires the bot to have **Manage Server**.
+
+### Containment -- admins are immune
+- **Administrators and the server owner can no longer be clanked.** Containment
+  can't actually restrain an admin (they bypass channel overrides and usually
+  outrank the bot), so a clank only half-applied -- stripping the roles it could
+  reach without confining anyone. Every clank path now refuses an admin or the
+  owner (automatic and manual alike) with a clear message, so you can't
+  accidentally clank yourself or a fellow admin. To free someone clanked before
+  this fix, run `.unclank @them`.
+
 ## [clankwarden] -- 2026-06-04
 
 ### Fixes

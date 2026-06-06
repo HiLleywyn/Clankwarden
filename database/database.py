@@ -256,6 +256,7 @@ _GUILD_KEY_ALIASES: dict[str, str] = {
     "NAME_BLACKLIST": "name_blacklist",
     "CLANK_DEFAULT_ROLE_ID": "clank_default_role",
     "CLANK_TANK_BOARD": "clank_tank_board",
+    "SECURITY_PAUSE_DMS": "security_pause_dms",
     "MOD_LOG_CHANNEL_ID": "mod_log_channel",
     "DEHOIST_ENABLED": "dehoist_enabled",
     "DEHOIST_MODE": "dehoist_mode",

@@ -40,10 +40,13 @@ Each needs the matching permission (e.g. Ban Members for `.ban`).
 
 The scammer/bot-account containment system. `.clank` actions need Manage Roles;
 `/clank` and `/unclank` are limited to the mod team and the clanker-hunter role.
+**Administrators and the server owner are immune** -- no clank path (automatic or
+manual) will contain them.
 
 | Command | What it does |
 |---|---|
 | `.clank @user [reason] [duration]` (`/clank`) | Clank a user: strip their roles, confine them to the tank. Optional duration like `30m`, `2h`, `7d`. |
+| `.clank pausedms on\|off` | Auto-arm Discord's "Pause DMs" security action and keep it on (re-arms the 24h window). No argument shows the state. Needs Manage Server. |
 | `.unclank @user` (`.release`, `.free`, `/unclank`, `.clank unclank`) | Release a user and restore their roles. |
 | `.clank list` | Active clankers. |
 | `.clank info @user` | A clanker's full record. |
@@ -116,6 +119,7 @@ Auren web UI.
 | `clankerlog` (`tanklog`) | Containment log channel. |
 | `escapethread` (`escape`, `thread`) | Escape-room thread. |
 | `reflection` (`wait`) | Escape-room reflection wait (1-120 min). |
+| `pausedms` (`dmpause`) | Auto Pause DMs security action on/off (also `.clank pausedms`). |
 | `hunterrole` / `hunterchannel` | Clanker-hunter role / report channel. |
 | `autodelete` (`ad`) | Auto-delete command/mod replies after N seconds (0 = keep). |
 | `autodeleteinfo` (`adinfo`) | Auto-delete info panels after N seconds (0 = keep). |

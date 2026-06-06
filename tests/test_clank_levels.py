@@ -1,6 +1,9 @@
 """Unit tests for the 5-level clanktank depth model (pure helpers in cogs.clank)."""
 from __future__ import annotations
 
+import asyncio
+import types
+
 import discord  # noqa: F401  -- Components V2 era discord.py
 import pytest
 
@@ -82,3 +85,48 @@ def test_level_stations_helper_matches_table():
     assert clank._level_stations(4) == clank._ER_LEVEL_STATIONS[4]
     # out-of-range falls back to the deepest level
     assert clank._level_stations(99) == clank._ER_LEVEL_STATIONS[5]
+
+
+# -- Admin immunity in _do_clank ---------------------------------------------
+
+def _fake_member(*, member_id: int, admin: bool, owner_id: int):
+    guild = types.SimpleNamespace(id=99, owner_id=owner_id)
+    perms = types.SimpleNamespace(administrator=admin)
+    return types.SimpleNamespace(
+        id=member_id, guild=guild, guild_permissions=perms,
+        # __str__ via SimpleNamespace falls back to repr; that is fine for the
+        # error message assertions below.
+    )
+
+
+def test_do_clank_refuses_an_administrator():
+    cog = clank.Clanktank.__new__(clank.Clanktank)
+    member = _fake_member(member_id=2, admin=True, owner_id=1)
+    with pytest.raises(ValueError) as exc:
+        asyncio.run(cog._do_clank(member, member, "spam", None))
+    assert "administrator" in str(exc.value).lower()
+
+
+def test_do_clank_refuses_the_server_owner_even_without_admin_flag():
+    cog = clank.Clanktank.__new__(clank.Clanktank)
+    member = _fake_member(member_id=1, admin=False, owner_id=1)
+    with pytest.raises(ValueError) as exc:
+        asyncio.run(cog._do_clank(member, member, "spam", None))
+    assert "immune" in str(exc.value).lower()
+
+
+def test_do_clank_lets_a_normal_member_past_the_admin_guard():
+    # A non-admin, non-owner member must clear the immunity guard. We stub the
+    # next step (_clanker_role) so the call fails for a DIFFERENT, later reason,
+    # proving the admin guard did not fire.
+    cog = clank.Clanktank.__new__(clank.Clanktank)
+
+    async def _no_role(_guild):
+        return None
+
+    cog._clanker_role = _no_role
+    member = _fake_member(member_id=2, admin=False, owner_id=1)
+    with pytest.raises(ValueError) as exc:
+        asyncio.run(cog._do_clank(member, member, "spam", None))
+    msg = str(exc.value).lower()
+    assert "administrator" not in msg and "immune" not in msg
