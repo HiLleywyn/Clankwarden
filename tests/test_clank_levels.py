@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import types
+from datetime import datetime, timedelta, timezone
 
 import discord  # noqa: F401  -- Components V2 era discord.py
 import pytest
@@ -130,3 +131,54 @@ def test_do_clank_lets_a_normal_member_past_the_admin_guard():
         asyncio.run(cog._do_clank(member, member, "spam", None))
     msg = str(exc.value).lower()
     assert "administrator" not in msg and "immune" not in msg
+
+
+# -- Pause DMs arming contract -----------------------------------------------
+
+def _fake_guild_with_edit(dms_paused_until):
+    edits = []
+
+    async def _edit(**kwargs):
+        edits.append(kwargs)
+
+    guild = types.SimpleNamespace(
+        id=7, dms_paused_until=dms_paused_until, edit=_edit,
+    )
+    return guild, edits
+
+
+def test_ensure_dms_paused_is_a_noop_when_already_armed_with_headroom():
+    # Regression: an already-armed pause must report success (True) WITHOUT
+    # issuing another edit -- previously this returned False and the command
+    # mis-reported it as "could not arm".
+    cog = clank.Clanktank.__new__(clank.Clanktank)
+    future = datetime.now(timezone.utc) + timedelta(hours=20)
+    guild, edits = _fake_guild_with_edit(future)
+    assert asyncio.run(cog._ensure_dms_paused(guild)) is True
+    assert edits == []  # no API call -- still armed
+
+
+def test_ensure_dms_paused_arms_when_unset():
+    cog = clank.Clanktank.__new__(clank.Clanktank)
+    guild, edits = _fake_guild_with_edit(None)
+    assert asyncio.run(cog._ensure_dms_paused(guild)) is True
+    assert len(edits) == 1 and "dms_disabled_until" in edits[0]
+
+
+def test_ensure_dms_paused_re_arms_when_window_is_nearly_lapsed():
+    cog = clank.Clanktank.__new__(clank.Clanktank)
+    soon = datetime.now(timezone.utc) + timedelta(hours=1)  # below the 6h floor
+    guild, edits = _fake_guild_with_edit(soon)
+    assert asyncio.run(cog._ensure_dms_paused(guild)) is True
+    assert len(edits) == 1
+
+
+def test_ensure_dms_paused_propagates_api_errors():
+    cog = clank.Clanktank.__new__(clank.Clanktank)
+
+    async def _boom(**kwargs):
+        raise RuntimeError("discord said no")
+
+    guild = types.SimpleNamespace(id=7, dms_paused_until=None, edit=_boom)
+    with pytest.raises(RuntimeError):
+        asyncio.run(cog._ensure_dms_paused(guild))

@@ -4350,54 +4350,42 @@ class Clanktank(commands.Cog):
         await self.bot.wait_until_ready()
 
     async def _ensure_dms_paused(self, guild: discord.Guild) -> bool:
-        """Re-arm the 'Pause DMs' security action on ``guild`` when it is unset
-        or within the re-arm window. Returns True if a re-arm was issued.
-        No-ops (with a warning) when the bot lacks Manage Server."""
+        """Ensure the 'Pause DMs' security action is armed on ``guild``,
+        re-arming the 24h window when it is unset or close to lapsing.
+
+        Returns ``True`` when DMs end up paused (whether we just armed them or
+        they were already armed with headroom). Raises on a real API/permission
+        error -- callers decide whether to surface it (the command) or log and
+        move on (the background sweep)."""
         now = datetime.now(timezone.utc)
         current = getattr(guild, "dms_paused_until", None)
         if current is not None and (current - now) > self._PAUSE_DMS_REARM_BELOW:
-            return False  # still armed with comfortable headroom
-        me = guild.me
-        if me is None or not me.guild_permissions.manage_guild:
-            log.warning(
-                "clanktank: cannot pause DMs in gid=%s -- bot lacks Manage Server",
-                guild.id,
-            )
-            return False
-        try:
-            await guild.edit(
-                dms_disabled_until=now + self._PAUSE_DMS_WINDOW,
-                reason="Clankwarden: auto security action (Pause DMs)",
-            )
-            return True
-        except discord.Forbidden:
-            log.warning("clanktank: pause-DMs edit forbidden in gid=%s", guild.id)
-        except Exception:
-            log.exception("clanktank: pause-DMs edit failed in gid=%s", guild.id)
-        return False
+            return True  # already armed with comfortable headroom -- nothing to do
+        await guild.edit(
+            dms_disabled_until=now + self._PAUSE_DMS_WINDOW,
+            reason="Clankwarden: auto security action (Pause DMs)",
+        )
+        return True
 
-    async def _clear_dms_pause(self, guild: discord.Guild) -> bool:
-        """Lift the 'Pause DMs' security action immediately."""
-        try:
-            await guild.edit(
-                dms_disabled_until=None,
-                reason="Clankwarden: security action (Pause DMs) disabled",
-            )
-            return True
-        except Exception:
-            log.exception("clanktank: clearing pause-DMs failed in gid=%s", guild.id)
-            return False
+    async def _clear_dms_pause(self, guild: discord.Guild) -> None:
+        """Lift the 'Pause DMs' security action immediately. Raises on error."""
+        await guild.edit(
+            dms_disabled_until=None,
+            reason="Clankwarden: security action (Pause DMs) disabled",
+        )
 
     async def set_security_pause_dms(self, guild: discord.Guild, enabled: bool) -> bool:
         """Persist the auto-Pause-DMs setting for ``guild`` and apply it now:
         arm the security action when enabling, lift it when disabling. Returns
-        the result of the live Discord edit (True on success)."""
+        ``True`` when DMs are paused afterwards, ``False`` when cleared. Lets
+        Discord API errors propagate so the caller can report the real reason."""
         await self.bot.db.update_guild_setting(
             guild.id, "security_pause_dms", bool(enabled)
         )
         if enabled:
             return await self._ensure_dms_paused(guild)
-        return await self._clear_dms_pause(guild)
+        await self._clear_dms_pause(guild)
+        return False
 
     # -- Internal add / remove ------------------------------------------------
 
@@ -5914,11 +5902,27 @@ class Clanktank(commands.Cog):
                 "I need the Manage Server permission to pause DMs.")
             return
 
-        ok = await self.set_security_pause_dms(ctx.guild, truthy)
-        if truthy and not ok:
+        try:
+            await self.set_security_pause_dms(ctx.guild, truthy)
+        except discord.Forbidden as exc:
             await ctx.reply_error(
-                "Could not arm Pause DMs (check that I have Manage Server). "
-                "The setting was saved and I will retry automatically.")
+                "Discord refused the Pause DMs change -- I need the Manage "
+                f"Server permission. ({exc.text or exc})")
+            return
+        except discord.HTTPException as exc:
+            # Surface the real Discord error (status/code/message) instead of a
+            # guess -- the setting was already saved, so the hourly sweep retries.
+            detail = exc.text or str(exc)
+            log.warning("clanktank: pause-DMs edit rejected gid=%s status=%s code=%s: %s",
+                        ctx.guild.id, exc.status, exc.code, detail)
+            await ctx.reply_error(
+                f"Discord rejected the Pause DMs change ({exc.status}: {detail}). "
+                "The setting was saved; I will retry automatically.")
+            return
+        except Exception as exc:  # noqa: BLE001
+            log.exception("clanktank: pausedms command failed gid=%s", ctx.guild.id)
+            await ctx.reply_error(
+                f"Could not change Pause DMs ({exc!r}). The setting was saved.")
             return
         modlog = getattr(self.bot, "modlog", None)
         if modlog is not None:
