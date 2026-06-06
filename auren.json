@@ -66,7 +66,8 @@
           { "key": "CLANKERMAX_ROLE_ID", "type": "discord_role", "label": "Clankermax role", "help": "Added when a clanker sinks to depth L5 (confirmed scammer); removed when they rise above L5. Auto-created by name if unset. The bot's role must sit ABOVE it." },
           { "key": "NAME_BLACKLIST", "type": "string", "label": "Join-name blacklist", "help": "Comma-separated name patterns. Anyone who joins with a name containing one is auto-clanked to L5 (Clankermax). Case-insensitive substring match." },
           { "key": "CLANK_DEFAULT_ROLE_ID", "type": "discord_role", "label": "Default restore role", "help": "Safe baseline role handed back when a legacy clanker (with no stored roles) is released. Falls back to a role named User/Member." },
-          { "key": "CLANK_TANK_BOARD", "type": "boolean", "label": "Tank Board + animations", "default": true, "help": "Public depth board in the clanktank channel and descent/ascent animations on level changes." }
+          { "key": "CLANK_TANK_BOARD", "type": "boolean", "label": "Tank Board + animations", "default": true, "help": "Public depth board in the clanktank channel and descent/ascent animations on level changes." },
+          { "key": "SECURITY_PAUSE_DMS", "type": "boolean", "label": "Auto Pause DMs (Security Action)", "default": false, "help": "Keep Discord's server-wide 'Pause DMs' security action permanently on. Discord caps each pause at 24h; the bot re-arms it automatically. Requires the bot to have Manage Server." }
         ]
       },
       {

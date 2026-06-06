@@ -16,6 +16,14 @@ def test_schema_lists_editable_fields():
         assert f["type"] in {"string", "bool", "number", "discord_channel", "discord_role"}
 
 
+def test_security_pause_dms_is_a_bool_field():
+    fld = gs.FIELDS_BY_KEY["security_pause_dms"]
+    assert fld.type == "bool"
+    assert gs.coerce_guild_value(fld, "on") is True
+    assert gs.coerce_guild_value(fld, "off") is False
+    assert gs.coerce_guild_value(fld, True) is True
+
+
 def test_coerce_string_respects_max_len():
     fld = gs.FIELDS_BY_KEY["prefix"]
     assert gs.coerce_guild_value(fld, "!") == "!"

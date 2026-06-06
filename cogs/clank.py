@@ -1285,6 +1285,7 @@ class Clanktank(commands.Cog):
         self.bot.add_check(self._global_prefix_check)
         await self._load_escape_thread_override()
         self._sweep.start()
+        self._security_sweep.start()
         await self._restore_escape_views()
         log.info("Clanktank ready: %d active clankers %d escape rooms", len(self._clanked), len(self._escape_msg_ids))
 
@@ -1373,6 +1374,7 @@ class Clanktank(commands.Cog):
     async def cog_unload(self) -> None:
         self.bot.remove_check(self._global_prefix_check)
         self._sweep.cancel()
+        self._security_sweep.cancel()
 
     # -- Cache ----------------------------------------------------------------
 
@@ -4317,6 +4319,86 @@ class Clanktank(commands.Cog):
     async def _before_sweep(self) -> None:
         await self.bot.wait_until_ready()
 
+    # -- Security actions: auto Pause DMs -------------------------------------
+
+    # Discord caps each "Pause DMs" security action at 24h in the future. We arm
+    # a touch under that ceiling and re-arm once the remaining window drops below
+    # the floor, so an operator enables it once and the server stays DM-paused
+    # indefinitely. The hourly tick only reads the cached guild property unless a
+    # re-arm is actually due, so it is cheap.
+    _PAUSE_DMS_WINDOW = timedelta(hours=23, minutes=55)
+    _PAUSE_DMS_REARM_BELOW = timedelta(hours=6)
+
+    @tasks.loop(hours=1)
+    async def _security_sweep(self) -> None:
+        """Keep Discord's 'Pause DMs' security action armed for every guild that
+        opted in via the ``security_pause_dms`` setting."""
+        for guild in list(self.bot.guilds):
+            try:
+                s = await self.bot.db.get_guild_settings(guild.id)
+            except Exception:
+                continue
+            if not bool(s.get("security_pause_dms")):
+                continue
+            try:
+                await self._ensure_dms_paused(guild)
+            except Exception:
+                log.exception("clanktank: security sweep failed gid=%s", guild.id)
+
+    @_security_sweep.before_loop
+    async def _before_security_sweep(self) -> None:
+        await self.bot.wait_until_ready()
+
+    async def _ensure_dms_paused(self, guild: discord.Guild) -> bool:
+        """Re-arm the 'Pause DMs' security action on ``guild`` when it is unset
+        or within the re-arm window. Returns True if a re-arm was issued.
+        No-ops (with a warning) when the bot lacks Manage Server."""
+        now = datetime.now(timezone.utc)
+        current = getattr(guild, "dms_paused_until", None)
+        if current is not None and (current - now) > self._PAUSE_DMS_REARM_BELOW:
+            return False  # still armed with comfortable headroom
+        me = guild.me
+        if me is None or not me.guild_permissions.manage_guild:
+            log.warning(
+                "clanktank: cannot pause DMs in gid=%s -- bot lacks Manage Server",
+                guild.id,
+            )
+            return False
+        try:
+            await guild.edit(
+                dms_disabled_until=now + self._PAUSE_DMS_WINDOW,
+                reason="Clankwarden: auto security action (Pause DMs)",
+            )
+            return True
+        except discord.Forbidden:
+            log.warning("clanktank: pause-DMs edit forbidden in gid=%s", guild.id)
+        except Exception:
+            log.exception("clanktank: pause-DMs edit failed in gid=%s", guild.id)
+        return False
+
+    async def _clear_dms_pause(self, guild: discord.Guild) -> bool:
+        """Lift the 'Pause DMs' security action immediately."""
+        try:
+            await guild.edit(
+                dms_disabled_until=None,
+                reason="Clankwarden: security action (Pause DMs) disabled",
+            )
+            return True
+        except Exception:
+            log.exception("clanktank: clearing pause-DMs failed in gid=%s", guild.id)
+            return False
+
+    async def set_security_pause_dms(self, guild: discord.Guild, enabled: bool) -> bool:
+        """Persist the auto-Pause-DMs setting for ``guild`` and apply it now:
+        arm the security action when enabling, lift it when disabling. Returns
+        the result of the live Discord edit (True on success)."""
+        await self.bot.db.update_guild_setting(
+            guild.id, "security_pause_dms", bool(enabled)
+        )
+        if enabled:
+            return await self._ensure_dms_paused(guild)
+        return await self._clear_dms_pause(guild)
+
     # -- Internal add / remove ------------------------------------------------
 
     async def _purge_and_store_bg(
@@ -4380,6 +4462,18 @@ class Clanktank(commands.Cog):
         guild = member.guild
         uid, gid = member.id, guild.id
         entry_level = _clamp_level(entry_level)
+
+        # Administrators and the server owner are immune to clanking on EVERY
+        # path -- automatic and manual alike. Containment cannot actually
+        # restrain an admin: they bypass channel overrides and usually sit above
+        # the bot in the role hierarchy, so a clank only half-applies (it strips
+        # roles it can reach without confining them). This guard stops an
+        # operator from accidentally clanking themselves or a fellow admin.
+        if member.id == guild.owner_id or member.guild_permissions.administrator:
+            raise ValueError(
+                f"{member} is a server administrator -- admins and the server "
+                f"owner are immune to clanking."
+            )
 
         clanker_role = await self._clanker_role(guild)
         if clanker_role is None:
@@ -5547,6 +5641,9 @@ class Clanktank(commands.Cog):
             await self._do_clank(user, interaction.user, reason or None, dur,
                                  defer_purge=True, allow_booster=True, manual=True,
                                  entry_level=entry_level)
+        except ValueError as exc:
+            await interaction.followup.send(str(exc), ephemeral=True)
+            return
         except Exception:
             log.exception("clanktank: slash clank failed uid=%s", user.id)
             await interaction.followup.send(
@@ -5763,6 +5860,88 @@ class Clanktank(commands.Cog):
                     ("Moderator", ctx.author.mention),
                     *warn_fields,
                 ],
+            ),
+            mention_author=False,
+        )
+
+    @clanker_group.command(name="pausedms", aliases=["pausedm", "securitydms", "dmpause"])
+    @guild_only
+    async def clanker_pausedms(self, ctx: DiscoContext, value: str = "") -> None:
+        """Auto-arm Discord's 'Pause DMs' security action and keep it on.
+
+        `.clank pausedms on` enables it (the bot re-arms the 24h window so it
+        never lapses), `off` disables it, no argument shows the current state.
+        """
+        if not ctx.author.guild_permissions.manage_guild:
+            await ctx.reply_error("You need Manage Server permission.")
+            return
+
+        s = await self.bot.db.get_guild_settings(ctx.guild.id)
+        enabled_now = bool(s.get("security_pause_dms"))
+        v = value.strip().lower()
+
+        if v == "":
+            paused_until = getattr(ctx.guild, "dms_paused_until", None)
+            live = (
+                f"paused until <t:{int(paused_until.timestamp())}:R>"
+                if paused_until else "not currently paused"
+            )
+            await ctx.reply(
+                view=_v2(
+                    "Security Action: Pause DMs",
+                    color=C_NAVY if enabled_now else C_ERROR,
+                    fields=[
+                        ("Auto Pause DMs", "on" if enabled_now else "off"),
+                        ("Discord state", live),
+                    ],
+                    footer=(
+                        f"Toggle with `{ctx.prefix}clank pausedms on|off`. When on, "
+                        f"the bot re-arms the 24h pause automatically."
+                    ),
+                ),
+                mention_author=False,
+            )
+            return
+
+        truthy = v in ("on", "true", "yes", "enable", "enabled", "1")
+        falsy = v in ("off", "false", "no", "disable", "disabled", "0")
+        if not (truthy or falsy):
+            await ctx.reply_error("Give `on` or `off`.")
+            return
+
+        if not ctx.guild.me.guild_permissions.manage_guild:
+            await ctx.reply_error(
+                "I need the Manage Server permission to pause DMs.")
+            return
+
+        ok = await self.set_security_pause_dms(ctx.guild, truthy)
+        if truthy and not ok:
+            await ctx.reply_error(
+                "Could not arm Pause DMs (check that I have Manage Server). "
+                "The setting was saved and I will retry automatically.")
+            return
+        modlog = getattr(self.bot, "modlog", None)
+        if modlog is not None:
+            try:
+                await modlog.config(
+                    "config.security_pause_dms", ctx.guild.id, actor=ctx.author,
+                    summary=f"Auto Pause DMs turned {'on' if truthy else 'off'}.",
+                    metadata={"enabled": truthy},
+                )
+            except Exception:
+                pass
+        await ctx.reply(
+            view=_v2(
+                "Security Action: Pause DMs",
+                color=C_SUCCESS,
+                desc=(
+                    "Auto Pause DMs is now **on**. New direct messages between "
+                    "members are paused, and I will keep re-arming the 24h window "
+                    "so it never lapses -- set it and forget it."
+                    if truthy else
+                    "Auto Pause DMs is now **off**. The pause has been lifted and "
+                    "members can DM each other again."
+                ),
             ),
             mention_author=False,
         )
