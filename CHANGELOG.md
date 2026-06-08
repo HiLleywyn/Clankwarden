@@ -3,6 +3,10 @@
 ## [clankwarden] -- 2026-06-08
 
 ### Security audit + fixes
+- **`.clank` reacts with a wilted rose to confirm.** A successful `.clank`
+  drops a 🥀 reaction on the command message so you get instant confirmation the
+  containment landed (the scam-hunter report channels keep their existing
+  check/cross reactions).
 - **Pause DMs no longer lapses after ~24h.** The auto Pause-DMs re-arm is now
   far more robust: it sweeps every 15 minutes (was hourly) and re-arms with a
   12-hour safety margin (was 6h), so the pause only drops if the bot is fully

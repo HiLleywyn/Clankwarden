@@ -5773,6 +5773,12 @@ class Clanktank(commands.Cog):
             await ctx.reply_error("Failed to apply containment. Check bot role hierarchy.")
             return
 
+        # Drop a wilted rose on the invoking message to confirm the clank landed.
+        try:
+            await ctx.message.add_reaction("\U0001F940")  # wilted flower (rose)
+        except Exception:
+            pass
+
         # Tell the operator if the L5 (Clankermax) role could not be applied
         # (re-check is idempotent: _do_clank already applied it on success).
         warn_fields: list[tuple[str, str]] = []
