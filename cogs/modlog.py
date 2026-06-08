@@ -773,8 +773,8 @@ class ModLog(ModCog):
         if res["ok"]:
             await send_v2(ctx, Container(accent_color=C_SUCCESS).text(
                 f"## Audit integrity verified\n"
-                f"-# {res['checked']} event(s) form an unbroken hash chain. "
-                f"No row has been altered or deleted out of band."))
+                f"-# {res['checked']} event(s) form an unbroken hash chain -- no "
+                f"row was altered or removed by anything without the chain key."))
         else:
             await send_v2(ctx, Container(accent_color=C_ERROR).text(
                 f"## Audit integrity BROKEN\n"

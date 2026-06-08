@@ -71,6 +71,64 @@ def test_event_hash_is_deterministic_and_chains() -> None:
     assert logger._event_hash("deadbeef", ev) != h1
 
 
+def test_event_hash_v2_is_keyed_and_covers_channel(monkeypatch) -> None:
+    logger = modlog.ModLogger(bot=None)
+    ev = LogEvent(category=Category.MODERATION, event_type="member.ban", guild_id=1,
+                  severity=Severity.ALERT, target=42, channel=100, summary="x",
+                  event_id="evt_fixed")
+    monkeypatch.setenv("MODLOG_CHAIN_KEY", "secret-a")
+    keyed_a = logger._event_hash("", ev, modlog._CHAIN_VERSION)
+    logger._warned_no_chain_key = False
+    monkeypatch.setenv("MODLOG_CHAIN_KEY", "secret-b")
+    keyed_b = logger._event_hash("", ev, modlog._CHAIN_VERSION)
+    assert keyed_a != keyed_b  # the key actually keys the chain
+    # channel_id is bound into v2 (legacy v1 ignores it). Same id + ts so only
+    # the channel differs.
+    ev2 = LogEvent(category=Category.MODERATION, event_type="member.ban", guild_id=1,
+                   severity=Severity.ALERT, target=42, channel=999, summary="x",
+                   event_id="evt_fixed", created_at=ev.created_at)
+    assert logger._event_hash("", ev2, modlog._CHAIN_VERSION) != keyed_b
+    assert (logger._event_hash("", ev, modlog._CHAIN_VERSION_LEGACY)
+            == logger._event_hash("", ev2, modlog._CHAIN_VERSION_LEGACY))
+
+
+def test_verify_chain_accepts_mixed_legacy_and_keyed_rows() -> None:
+    import asyncio
+
+    logger = modlog.ModLogger(bot=None)
+
+    def _row(row_id, ev, prev, version):
+        return {
+            "id": row_id, "event_id": ev.event_id, "created_at": ev.created_at,
+            "category": ev.category.value, "severity": ev.severity.value,
+            "event_type": ev.event_type, "actor_id": ev.actor_id,
+            "target_id": ev.target_id, "channel_id": ev.channel_id,
+            "summary": ev.summary, "prev_hash": prev,
+            "hash": logger._event_hash(prev, ev, version), "hash_version": version,
+        }
+
+    e1 = LogEvent(category=Category.MEMBER, event_type="a", guild_id=5, target=1, summary="s1")
+    e2 = LogEvent(category=Category.MODERATION, event_type="b", guild_id=5, target=2,
+                  channel=77, summary="s2")
+    # e1 written under the legacy (NULL/1) format, e2 under the keyed format.
+    r1 = _row(1, e1, "", modlog._CHAIN_VERSION_LEGACY)
+    r1["hash_version"] = None  # pre-migration rows have no version
+    r2 = _row(2, e2, r1["hash"], modlog._CHAIN_VERSION)
+    all_rows = [r1, r2]
+
+    class _DB:
+        # Honor `id > after_id` + page so the pagination loop terminates and is
+        # actually exercised (page=1 -> two fetches + an empty third).
+        async def fetch_all(self, _sql, _gid, after_id, page):
+            return [r for r in all_rows if r["id"] > after_id][:page]
+
+    logger.bot = type("B", (), {"db": _DB()})()
+    assert asyncio.run(logger.verify_chain(5))["checked"] == 2
+    # Same result when paginated one row at a time -- full chain, not just page 1.
+    res = asyncio.run(logger.verify_chain(5, page=1))
+    assert res["ok"] is True and res["checked"] == 2
+
+
 def test_anomaly_window_fires_once_at_threshold() -> None:
     logger = modlog.ModLogger(bot=None)
     key = (1, "join")

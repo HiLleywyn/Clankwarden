@@ -1,5 +1,36 @@
 # Changelog
 
+## [clankwarden] -- 2026-06-08
+
+### Security audit + fixes
+- **`.clank` reacts with a wilted rose to confirm.** A successful `.clank`
+  drops a 🥀 reaction on the command message so you get instant confirmation the
+  containment landed (the scam-hunter report channels keep their existing
+  check/cross reactions).
+- **Pause DMs no longer lapses after ~24h.** The auto Pause-DMs re-arm is now
+  far more robust: it sweeps every 15 minutes (was hourly) and re-arms with a
+  12-hour safety margin (was 6h), so the pause only drops if the bot is fully
+  offline for the entire final 12h before expiry -- and after any restart it is
+  restored within minutes. It also no longer trips over discord.py rebuilding a
+  guild's cached incident state to "unset" on unrelated guild updates: the bot
+  now remembers the window it armed and trusts the later of that and Discord's
+  reported expiry. (Root cause of "enabled until 1:59pm, gone after 1:59pm".)
+- **Mod-log audit chain is now keyed (HMAC).** The tamper-evident chain was an
+  unkeyed SHA-256 -- evident, but a party with DB-write access could recompute a
+  valid chain. New events use a keyed HMAC-SHA256 (from `MODLOG_CHAIN_KEY`, or
+  the platform `AUREN_PROVISION_SECRET`) that also binds the channel id; rows
+  written before the upgrade keep verifying under the legacy algorithm. The
+  `.modlog verify` wording no longer overstates the guarantee.
+- **`.modlog verify` now checks the whole chain.** It previously verified only
+  the oldest 5000 events and reported "verified" while silently ignoring
+  everything after (the most recent events -- the likeliest tamper target). It
+  now paginates through every persisted event.
+- **Containment hierarchy guard.** A manual `.clank` now refuses a target who is
+  the same rank as, or higher than, the moderator (owners/admins bypass;
+  automatic and hunter-vs-scammer flows are unaffected) -- matching the existing
+  `mod` command guard.
+- **Settings-API key check is constant-time** (`hmac.compare_digest`).
+
 ## [clankwarden] -- 2026-06-06
 
 ### Security actions -- auto Pause DMs
