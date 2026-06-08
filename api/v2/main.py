@@ -9,6 +9,7 @@ disabled (health still works).
 """
 from __future__ import annotations
 
+import hmac
 import os
 from typing import Any
 
@@ -42,7 +43,9 @@ def create_app(bot: Any = None) -> FastAPI:
         configured = os.getenv("CLANK_API_KEY", "").strip()
         if not configured:
             raise ForbiddenError("API is disabled (CLANK_API_KEY is not set).")
-        if not x_api_key or x_api_key != configured:
+        # Constant-time compare so the one auth check the settings API rests on
+        # leaks no timing signal about how much of the key matched.
+        if not x_api_key or not hmac.compare_digest(x_api_key, configured):
             raise UnauthorizedError("Invalid or missing X-API-Key.")
 
     def _db():  # type: ignore[no-untyped-def]

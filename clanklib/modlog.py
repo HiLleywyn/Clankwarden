@@ -40,8 +40,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import hmac
 import json
 import logging
+import os
 import secrets
 import time
 from dataclasses import dataclass, field
@@ -64,6 +66,13 @@ log = logging.getLogger(__name__)
 _SUMMARY_MAX = 500
 _FIELD_VALUE_MAX = 800
 _METADATA_BYTES_MAX = 6000
+
+# Audit-chain hash versions. v1 (legacy) is an unkeyed SHA-256 over nine fields;
+# rows written before the keyed upgrade verify under it forever. v2 is a keyed
+# HMAC-SHA256 that also covers channel_id, so a party with only DB-write access
+# (and no chain key) can no longer recompute a valid chain after tampering.
+_CHAIN_VERSION_LEGACY = 1
+_CHAIN_VERSION = 2
 
 
 class Severity(Enum):
@@ -273,6 +282,7 @@ class ModLogger:
         # (guild_id, bucket). Bucket is a coarse signal like "join" or
         # "mod:<actor_id>"; a burst trips a security anomaly + alert.
         self._windows: dict[tuple, list[float]] = {}
+        self._warned_no_chain_key = False
 
     def _lock_for(self, guild_id: int) -> "asyncio.Lock":
         lock = self._chain_lock.get(guild_id)
@@ -361,13 +371,41 @@ class ModLogger:
         )
         return await self.emit(event)
 
-    def _event_hash(self, prev: str, event: LogEvent) -> str:
+    def _chain_key(self) -> bytes:
+        """The secret that keys the audit chain. Sourced from MODLOG_CHAIN_KEY,
+        else the platform's AUREN_PROVISION_SECRET (the same zero-touch secret
+        the framework derives other keys from). When neither is set the chain is
+        only as strong as a plain digest -- still tamper-*evident*, but a DB-only
+        attacker could recompute it -- so we warn once."""
+        key = (os.getenv("MODLOG_CHAIN_KEY") or os.getenv("AUREN_PROVISION_SECRET") or "").strip()
+        if not key and not self._warned_no_chain_key:
+            self._warned_no_chain_key = True
+            log.warning(
+                "modlog: audit chain is unkeyed (set MODLOG_CHAIN_KEY or "
+                "AUREN_PROVISION_SECRET to make it tamper-proof, not just "
+                "tamper-evident).")
+        return key.encode("utf-8")
+
+    def _event_hash(self, prev: str, event: LogEvent,
+                    version: int = _CHAIN_VERSION) -> str:
+        if version <= _CHAIN_VERSION_LEGACY:
+            # Frozen legacy form -- never change, or pre-upgrade rows stop
+            # verifying. Unkeyed SHA-256 over the original nine fields.
+            payload = "|".join(str(x) for x in (
+                prev, event.event_id, _epoch(event.created_at),
+                event.category.value, event.severity.value, event.event_type,
+                event.actor_id or 0, event.target_id or 0, event.summary,
+            ))
+            return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        # v2: keyed HMAC, also binding channel_id into the chain.
         payload = "|".join(str(x) for x in (
             prev, event.event_id, _epoch(event.created_at),
             event.category.value, event.severity.value, event.event_type,
-            event.actor_id or 0, event.target_id or 0, event.summary,
+            event.actor_id or 0, event.target_id or 0, event.channel_id or 0,
+            event.summary,
         ))
-        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        return hmac.new(self._chain_key(), payload.encode("utf-8"),
+                        hashlib.sha256).hexdigest()
 
     async def _chain_tip_for(self, db: Any, guild_id: int) -> str:
         """The latest hash in a guild's chain (cached; seeded from the DB)."""
@@ -390,50 +428,69 @@ class ModLogger:
         async with self._lock_for(event.guild_id):
             try:
                 prev = await self._chain_tip_for(db, event.guild_id)
-                digest = self._event_hash(prev, event)
+                digest = self._event_hash(prev, event, _CHAIN_VERSION)
                 meta = json.dumps(event.metadata)[:_METADATA_BYTES_MAX]
                 await db.execute(
                     "INSERT INTO mod_log_events "
                     "(event_id, guild_id, created_at, category, severity, event_type, "
-                    " actor_id, target_id, channel_id, summary, metadata, prev_hash, hash) "
-                    "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13) "
+                    " actor_id, target_id, channel_id, summary, metadata, prev_hash, hash, "
+                    " hash_version) "
+                    "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13,$14) "
                     "ON CONFLICT (guild_id, event_id) DO NOTHING",
                     event.event_id, event.guild_id, event.created_at,
                     event.category.value, event.severity.value, event.event_type,
                     event.actor_id, event.target_id, event.channel_id,
-                    event.summary, meta, prev, digest,
+                    event.summary, meta, prev, digest, _CHAIN_VERSION,
                 )
                 self._chain_tip[event.guild_id] = digest
             except Exception:  # noqa: BLE001
                 log.debug("modlog persist failed", exc_info=True)
 
-    async def verify_chain(self, guild_id: int, limit: int = 5000) -> dict:
-        """Walk the hash chain in order and report the first break, if any."""
+    async def verify_chain(self, guild_id: int, page: int = 5000) -> dict:
+        """Walk the *entire* hash chain in order and report the first break.
+
+        Paginated by ``id`` so a guild with more than one page of events is
+        verified in full (the old single ``LIMIT`` only ever checked the oldest
+        rows and reported "ok" while silently ignoring everything after -- i.e.
+        the most recent events, the likeliest tamper target). ``page`` is just
+        the batch size; every persisted event is checked."""
         db = self.db
         if db is None:
             return {"ok": True, "checked": 0, "broken_at": None}
-        rows = await db.fetch_all(
-            "SELECT id, event_id, created_at, category, severity, event_type, "
-            "actor_id, target_id, summary, prev_hash, hash "
-            "FROM mod_log_events WHERE guild_id=$1 AND hash IS NOT NULL "
-            "ORDER BY id ASC LIMIT $2", int(guild_id), int(limit))
         prev = ""
         checked = 0
-        for r in rows:
-            ev = LogEvent(
-                category=Category(r["category"]), event_type=r["event_type"],
-                guild_id=int(guild_id), severity=Severity(r["severity"]),
-                actor=int(r["actor_id"]) if r.get("actor_id") else None,
-                target=int(r["target_id"]) if r.get("target_id") else None,
-                summary=r.get("summary") or "", event_id=r["event_id"],
-                created_at=r["created_at"],
-            )
-            expected = self._event_hash(prev, ev)
-            if r.get("prev_hash") != prev or r.get("hash") != expected:
-                return {"ok": False, "checked": checked,
-                        "broken_at": r["event_id"], "row_id": r["id"]}
-            prev = r["hash"]
-            checked += 1
+        after_id = 0
+        page = max(1, int(page))
+        while True:
+            rows = await db.fetch_all(
+                "SELECT id, event_id, created_at, category, severity, event_type, "
+                "actor_id, target_id, channel_id, summary, prev_hash, hash, hash_version "
+                "FROM mod_log_events WHERE guild_id=$1 AND hash IS NOT NULL AND id > $2 "
+                "ORDER BY id ASC LIMIT $3", int(guild_id), int(after_id), page)
+            if not rows:
+                break
+            for r in rows:
+                ev = LogEvent(
+                    category=Category(r["category"]), event_type=r["event_type"],
+                    guild_id=int(guild_id), severity=Severity(r["severity"]),
+                    actor=int(r["actor_id"]) if r.get("actor_id") else None,
+                    target=int(r["target_id"]) if r.get("target_id") else None,
+                    channel=int(r["channel_id"]) if r.get("channel_id") else None,
+                    summary=r.get("summary") or "", event_id=r["event_id"],
+                    created_at=r["created_at"],
+                )
+                # Each row is recomputed under the version it was written with, so
+                # legacy (pre-upgrade) rows keep verifying after the keyed upgrade.
+                expected = self._event_hash(
+                    prev, ev, int(r.get("hash_version") or _CHAIN_VERSION_LEGACY))
+                if r.get("prev_hash") != prev or r.get("hash") != expected:
+                    return {"ok": False, "checked": checked,
+                            "broken_at": r["event_id"], "row_id": r["id"]}
+                prev = r["hash"]
+                checked += 1
+                after_id = r["id"]
+            if len(rows) < page:
+                break
         return {"ok": True, "checked": checked, "broken_at": None}
 
     async def _dispatch(self, event: LogEvent) -> None:

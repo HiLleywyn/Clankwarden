@@ -4322,14 +4322,17 @@ class Clanktank(commands.Cog):
     # -- Security actions: auto Pause DMs -------------------------------------
 
     # Discord caps each "Pause DMs" security action at 24h in the future. We arm
-    # a touch under that ceiling and re-arm once the remaining window drops below
-    # the floor, so an operator enables it once and the server stays DM-paused
-    # indefinitely. The hourly tick only reads the cached guild property unless a
-    # re-arm is actually due, so it is cheap.
+    # a touch under that ceiling and re-arm well before the remaining window runs
+    # out, so an operator enables it once and the server stays DM-paused
+    # indefinitely. The tick is cheap (it only reads cached state unless a re-arm
+    # is actually due), so we run it often and re-arm with a wide safety margin:
+    # the pause only lapses if the bot is fully down for the whole final
+    # _PAUSE_DMS_REARM_BELOW window before expiry. A short loop also means that
+    # after any restart/outage the pause is restored within minutes, not hours.
     _PAUSE_DMS_WINDOW = timedelta(hours=23, minutes=55)
-    _PAUSE_DMS_REARM_BELOW = timedelta(hours=6)
+    _PAUSE_DMS_REARM_BELOW = timedelta(hours=12)
 
-    @tasks.loop(hours=1)
+    @tasks.loop(minutes=15)
     async def _security_sweep(self) -> None:
         """Keep Discord's 'Pause DMs' security action armed for every guild that
         opted in via the ``security_pause_dms`` setting."""
@@ -4349,22 +4352,48 @@ class Clanktank(commands.Cog):
     async def _before_security_sweep(self) -> None:
         await self.bot.wait_until_ready()
 
+    def _pause_dms_memory(self) -> dict[int, datetime]:
+        """Per-process record of the expiry we last armed for each guild.
+
+        discord.py rebuilds ``guild._incidents_data`` from every GUILD_UPDATE,
+        and most of those payloads omit ``incidents_data`` -- so an unrelated
+        change (name, icon, boost level, ...) silently clobbers
+        ``guild.dms_paused_until`` back to ``None`` even while DMs are really
+        paused. Trusting only the gateway value would therefore make us re-arm
+        on every sweep. We remember what we set and use the later of the two so
+        the headroom check stays meaningful. Created lazily because the cog is
+        sometimes instantiated via ``__new__`` (tests) without ``__init__``."""
+        mem = getattr(self, "_pause_dms_armed_until", None)
+        if mem is None:
+            mem = {}
+            self._pause_dms_armed_until = mem
+        return mem
+
     async def _ensure_dms_paused(self, guild: discord.Guild) -> bool:
         """Ensure the 'Pause DMs' security action is armed on ``guild``,
-        re-arming the 24h window when it is unset or close to lapsing.
+        re-arming the window when it is unset or close to lapsing.
 
         Returns ``True`` when DMs end up paused (whether we just armed them or
         they were already armed with headroom). Raises on a real API/permission
         error -- callers decide whether to surface it (the command) or log and
         move on (the background sweep)."""
         now = datetime.now(timezone.utc)
-        current = getattr(guild, "dms_paused_until", None)
+        mem = self._pause_dms_memory()
+        # Use the latest expiry we know about: the gateway-reported one (which
+        # may have been clobbered to None) or the one we last armed ourselves.
+        candidates = [
+            t for t in (getattr(guild, "dms_paused_until", None), mem.get(guild.id))
+            if t is not None
+        ]
+        current = max(candidates) if candidates else None
         if current is not None and (current - now) > self._PAUSE_DMS_REARM_BELOW:
             return True  # already armed with comfortable headroom -- nothing to do
+        expiry = now + self._PAUSE_DMS_WINDOW
         await guild.edit(
-            dms_disabled_until=now + self._PAUSE_DMS_WINDOW,
+            dms_disabled_until=expiry,
             reason="Clankwarden: auto security action (Pause DMs)",
         )
+        mem[guild.id] = expiry
         return True
 
     async def _clear_dms_pause(self, guild: discord.Guild) -> None:
@@ -4373,6 +4402,7 @@ class Clanktank(commands.Cog):
             dms_disabled_until=None,
             reason="Clankwarden: security action (Pause DMs) disabled",
         )
+        self._pause_dms_memory().pop(guild.id, None)
 
     async def set_security_pause_dms(self, guild: discord.Guild, enabled: bool) -> bool:
         """Persist the auto-Pause-DMs setting for ``guild`` and apply it now:
@@ -4461,6 +4491,23 @@ class Clanktank(commands.Cog):
             raise ValueError(
                 f"{member} is a server administrator -- admins and the server "
                 f"owner are immune to clanking."
+            )
+
+        # Role-hierarchy guard for manual clanks: a moderator may not clank a
+        # member who outranks (or matches) them, mirroring the mod-command guard.
+        # Owners/admins bypass; automatic paths (manual=False) and non-member
+        # actors are unaffected, so hunter-vs-scammer flows still work (scammers
+        # sit below staff). Without this, a junior mod with Manage Roles could
+        # clank a senior non-admin moderator.
+        if (
+            manual
+            and isinstance(moderator, discord.Member)
+            and moderator.id != guild.owner_id
+            and not moderator.guild_permissions.administrator
+            and member.top_role >= moderator.top_role
+        ):
+            raise ValueError(
+                f"{member} is the same rank as you or higher -- you can't clank them."
             )
 
         clanker_role = await self._clanker_role(guild)

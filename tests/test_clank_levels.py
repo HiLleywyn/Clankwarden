@@ -167,8 +167,32 @@ def test_ensure_dms_paused_arms_when_unset():
 
 def test_ensure_dms_paused_re_arms_when_window_is_nearly_lapsed():
     cog = clank.Clanktank.__new__(clank.Clanktank)
-    soon = datetime.now(timezone.utc) + timedelta(hours=1)  # below the 6h floor
+    soon = datetime.now(timezone.utc) + timedelta(hours=1)  # below the 12h floor
     guild, edits = _fake_guild_with_edit(soon)
+    assert asyncio.run(cog._ensure_dms_paused(guild)) is True
+    assert len(edits) == 1
+
+
+def test_ensure_dms_paused_remembers_what_it_armed_and_does_not_re_arm():
+    # Regression: discord.py clobbers guild.dms_paused_until to None on any
+    # unrelated GUILD_UPDATE. After we arm, the next sweep must trust our own
+    # remembered expiry and NOT issue a redundant edit just because the gateway
+    # value went stale.
+    cog = clank.Clanktank.__new__(clank.Clanktank)
+    guild, edits = _fake_guild_with_edit(None)
+    assert asyncio.run(cog._ensure_dms_paused(guild)) is True  # arms
+    assert len(edits) == 1
+    guild.dms_paused_until = None  # simulate the gateway clobbering it back
+    assert asyncio.run(cog._ensure_dms_paused(guild)) is True  # still armed
+    assert len(edits) == 1  # no second edit -- remembered the fresh window
+
+
+def test_ensure_dms_paused_re_arms_when_remembered_window_lapses():
+    # The remembered expiry must still let the window lapse into re-arm range:
+    # a stale-but-soon remembered value re-arms just like the gateway one.
+    cog = clank.Clanktank.__new__(clank.Clanktank)
+    cog._pause_dms_armed_until = {7: datetime.now(timezone.utc) + timedelta(hours=1)}
+    guild, edits = _fake_guild_with_edit(None)
     assert asyncio.run(cog._ensure_dms_paused(guild)) is True
     assert len(edits) == 1
 
