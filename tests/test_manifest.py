@@ -53,3 +53,33 @@ def test_credentials_declare_the_token() -> None:
     data = _load()
     keys = {c["key"] for c in data.get("credentials", [])}
     assert "DISCORD_TOKEN" in keys
+
+
+# The least-privilege gateway set the bot actually uses (audited against every
+# on_* listener: modlog, clank, dehoist). Declared so the bot drops the
+# framework's broad moderation-bot default instead of inheriting it.
+_EXPECTED_INTENTS = {
+    "guilds", "members", "moderation", "guild_messages",
+    "message_content", "invites", "auto_moderation_execution",
+}
+
+
+def test_declares_least_privilege_intents() -> None:
+    data = _load()
+    declared = data.get("framework", {}).get("intents")
+    assert isinstance(declared, list) and declared, (
+        "auren.json must declare framework.intents explicitly (least privilege)"
+    )
+    assert set(declared) == _EXPECTED_INTENTS, (
+        f"intent set drift: {set(declared) ^ _EXPECTED_INTENTS}"
+    )
+
+
+def test_no_unused_privileged_or_unlistened_intents() -> None:
+    # The bot has zero presence/voice/reaction/typing listeners; requesting any
+    # of these (presences especially -- it is privileged) would over-ask and
+    # hurt App Directory verification.
+    declared = set(_load().get("framework", {}).get("intents", []))
+    for forbidden in ("presences", "voice_states", "guild_reactions",
+                      "guild_typing", "dm_messages", "dm_reactions"):
+        assert forbidden not in declared, f"{forbidden} is unused; do not request it"
