@@ -66,6 +66,7 @@ except ImportError:  # pragma: no cover
 
 from core.config import Config
 from core.framework.bot import Discoin
+from core.framework.components import safe_defer, safe_edit
 from core.framework.context import DiscoContext
 from core.framework.middleware import guild_only
 from core.framework.ui import (
@@ -1273,7 +1274,11 @@ class Clanktank(commands.Cog):
         self._clanked: set[tuple[int, int]] = set()
         self._escape_msg_ids: set[int] = set()
         self._escape_thread_override: int = 0
-        self._enforce_ts: dict[int, float] = {}
+        # Role-lock enforcement cooldown, keyed by (guild_id, user_id) so the
+        # same Discord user contained in two servers gets an independent cooldown
+        # in each -- keying by user id alone let one guild's enforcement suppress
+        # another's for the same account.
+        self._enforce_ts: dict[tuple[int, int], float] = {}
         self._clarion_msg_ids: set[int] = set()
         self._clarion_rate: dict[int, collections.deque] = {}
         self._legacy_imported: set[int] = set()  # guild ids already backfilled
@@ -3209,25 +3214,34 @@ class Clanktank(commands.Cog):
         already:  list[int] = []
         failed:   list[int] = []
 
-        for target_id in targets:
+        # A single hunter message can name many users; each clank is several
+        # REST calls (role, cleanup, thread). Pace the batch through BulkRunner
+        # like every other mass action so a big report never bursts past
+        # Discord's limits. Rate-limit errors propagate so the runner can back
+        # off / abort; other per-item failures are recorded and skipped.
+        from clanklib.ratelimit import BulkRunner, _retry_after
+
+        async def _hunter_clank_one(target_id: int) -> None:
             if await self.is_clanker(target_id, gid):
                 already.append(target_id)
-                continue
+                return
 
             member_obj = guild.get_member(target_id)
             if member_obj is None:
                 try:
                     member_obj = await guild.fetch_member(target_id)
-                except Exception:
+                except Exception as exc:
+                    if _retry_after(exc) is not None:
+                        raise
                     failed.append(target_id)
-                    continue
+                    return
 
             if member_obj.bot:
-                continue
+                return
             if (member_obj.guild_permissions.manage_messages
                     or member_obj.guild_permissions.administrator):
                 failed.append(target_id)
-                continue
+                return
 
             try:
                 await self._do_clank(
@@ -3236,12 +3250,16 @@ class Clanktank(commands.Cog):
                     duration_s=None, entry_level=4,
                 )
                 clanked.append(target_id)
-            except Exception:
+            except Exception as exc:
+                if _retry_after(exc) is not None:
+                    raise  # let BulkRunner pace/back off on rate limits
                 log.warning(
                     "clanktank: scam hunter clank failed target=%s gid=%s",
                     target_id, gid, exc_info=True,
                 )
                 failed.append(target_id)
+
+        await BulkRunner(base_delay=0.5).run(list(targets), _hunter_clank_one)
 
         # React to give instant feedback in the report channel.
         try:
@@ -3483,6 +3501,30 @@ class Clanktank(commands.Cog):
     # -- Events ---------------------------------------------------------------
 
     @commands.Cog.listener()
+    async def on_guild_remove(self, guild: discord.Guild) -> None:
+        """Purge this guild's stored data and in-memory state when the bot is
+        removed (Developer Policy: a server's data should not outlive the bot's
+        membership)."""
+        gid = guild.id
+        # Drop in-memory per-guild state so a removed guild leaves nothing behind.
+        self._clanked = {(u, g) for (u, g) in self._clanked if g != gid}
+        self._enforce_ts = {k: v for k, v in self._enforce_ts.items() if k[0] != gid}
+        self._clarion_rate.pop(gid, None)
+        self._legacy_imported.discard(gid)
+        try:
+            from clanklib.retention import purge_guild_data, total_rows
+            counts = await purge_guild_data(self.bot.db, gid)
+            self.bot.db.invalidate_settings_cache(gid)
+            log.info(
+                "clanktank: purged %d row(s) across %d table(s) for removed guild %s",
+                total_rows(counts), len(counts), gid,
+            )
+        except Exception:
+            log.warning(
+                "clanktank: failed to purge data for removed guild %s", gid, exc_info=True,
+            )
+
+    @commands.Cog.listener()
     async def on_member_update(self, before: discord.Member, after: discord.Member) -> None:
         uid, gid = after.id, after.guild.id
         if not await self.is_clanker(uid, gid):
@@ -3494,9 +3536,9 @@ class Clanktank(commands.Cog):
             return
 
         now = time.time()
-        if now - self._enforce_ts.get(uid, 0.0) < _ENFORCE_CD:
+        if now - self._enforce_ts.get((gid, uid), 0.0) < _ENFORCE_CD:
             return
-        self._enforce_ts[uid] = now
+        self._enforce_ts[(gid, uid)] = now
 
         to_remove = [r for r in after.roles if r.id in extra]
         try:
@@ -4284,9 +4326,9 @@ class Clanktank(commands.Cog):
             if not extra:
                 continue
             now = time.time()
-            if now - self._enforce_ts.get(uid, 0.0) < _ENFORCE_CD:
+            if now - self._enforce_ts.get((gid, uid), 0.0) < _ENFORCE_CD:
                 continue
-            self._enforce_ts[uid] = now
+            self._enforce_ts[(gid, uid)] = now
             to_remove = [r for r in member.roles if r.id in extra]
             try:
                 await member.remove_roles(*to_remove, reason="Clanktank sweep")
@@ -10030,7 +10072,11 @@ class _EscapeRoomView(discord.ui.LayoutView):
         fails = int(self._data.get("math_fails", 0)) + 1
         if fails >= 3:
             # Math is the canonical gate -- three strikes escalates them a level.
+            # Ack first (the level-up rebuilds and edits the panel), then post the
+            # escalation notice as a plain channel message so no Discord I/O runs
+            # before the 3-second interaction ack.
             self._data = {k: v for k, v in self._data.items() if k != "math_fails"}
+            await self._level_up(interaction)
             try:
                 await interaction.channel.send(  # type: ignore[union-attr]
                     f"{self._name}: three wrong answers. "
@@ -10038,7 +10084,6 @@ class _EscapeRoomView(discord.ui.LayoutView):
                 )
             except Exception:
                 pass
-            await self._level_up(interaction)
             return
         self._data = {**self._data, "math_fails": fails}
         self._rebuild()
@@ -10093,6 +10138,11 @@ class _EscapeRoomView(discord.ui.LayoutView):
         import re as _re
         normalized = " ".join(_re.sub(r"[^a-z0-9 ]", "", raw.lower()).split())
         if normalized == _ER_OATH_CANONICAL:
+            # Ack first: the reflection-wait lookup is a DB read, so defer before
+            # it to stay inside the 3-second window. _pass then renders the next
+            # station through safe_edit, which edits the panel via the deferred
+            # token.
+            await safe_defer(interaction)
             base = await self._cog._escape_wait_minutes(self._gid)
             rust = int(self._data.get("rust", 0))
             wait_mins = _reflect_wait(base, self._level, rust)
@@ -10319,6 +10369,10 @@ class _EscapeRoomView(discord.ui.LayoutView):
         if not await self._guard(interaction):
             return
         user = interaction.user
+        # Ack first: probing the user's DMs is a network round-trip, so defer
+        # before it. A deferred update keeps the panel in place; the branches
+        # below either edit it (pass) or post an ephemeral notice (followup).
+        await safe_defer(interaction)
         try:
             await user.send(
                 "⚠️ **Your DMs are still open.**\n\n"
@@ -10327,7 +10381,7 @@ class _EscapeRoomView(discord.ui.LayoutView):
                 "-# Server Settings -> Privacy & Safety -> Allow direct messages from server members (OFF)"
             )
             # DM succeeded -- DMs are still on. Tell them to close.
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "⚠️ **Your DMs are still open.** The bot was able to reach you.\n\n"
                 "Close your DMs first:\n"
                 "1. Open Discord settings\n"
@@ -10389,7 +10443,7 @@ class _EscapeRoomView(discord.ui.LayoutView):
         self._step = next_step
         self._data = merged
         self._rebuild()
-        await interaction.response.edit_message(view=self)
+        await safe_edit(interaction, self)
         await self._cog._er_save(
             self._uid, self._gid, step=next_step, step_data=merged, level=self._level)
         asyncio.ensure_future(
@@ -10418,7 +10472,7 @@ class _EscapeRoomView(discord.ui.LayoutView):
             self._step = len(self._stations())
             self._data = self._carry(nd)
             self._rebuild()
-            await interaction.response.edit_message(view=self)
+            await safe_edit(interaction, self)
             asyncio.ensure_future(self._cog._er_on_complete(self._uid, self._gid))
             return
         old_level = self._level
@@ -10428,7 +10482,7 @@ class _EscapeRoomView(discord.ui.LayoutView):
         self._step = 0
         self._data = keep
         self._rebuild()
-        await interaction.response.edit_message(view=self)
+        await safe_edit(interaction, self)
         await self._cog._er_save(self._uid, self._gid, step=0, step_data=keep, level=new_level)
         asyncio.ensure_future(self._cog._er_update_hint(self._uid, self._gid, new_level, 0))
         asyncio.ensure_future(self._cog._on_level_change(
@@ -10446,7 +10500,7 @@ class _EscapeRoomView(discord.ui.LayoutView):
         self._step = 0
         self._data = keep
         self._rebuild()
-        await interaction.response.edit_message(view=self)
+        await safe_edit(interaction, self)
         await self._cog._er_save(self._uid, self._gid, step=0, step_data=keep, level=new_level)
         asyncio.ensure_future(self._cog._er_update_hint(self._uid, self._gid, new_level, 0))
         asyncio.ensure_future(self._cog._on_level_change(

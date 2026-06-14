@@ -1,5 +1,41 @@
 # Changelog
 
+## [clankwarden] -- 2026-06-14
+
+### Data deletion + retention
+- **Server data is deleted when the bot is removed.** Clankwarden now handles
+  `on_guild_remove`: it purges every stored row for that server (containment
+  records, captured message evidence, warnings, audit log, dehoist, settings)
+  and clears its in-memory state, so a server's data does not outlive the bot's
+  membership.
+- **Erase a user on request.** `.modlog forget @user` deletes a user's stored
+  data in the server (containment, evidence, warnings, dehoist and case data).
+  Tamper-evident audit-log entries are retained for chain integrity.
+- **Privacy policy.** Added `docs/PRIVACY.md` describing exactly what is stored,
+  why, retention, and these deletion paths.
+
+### Discord-platform reliability + framework alignment
+- **Escape-room interactions are ack-safe.** The Clank Tank escape-room modals
+  and the DM-verification button used to do Discord/DB work (a channel message,
+  a settings lookup, a DM probe) *before* acknowledging the interaction, which
+  could trip Discord's 3-second window and surface "This interaction failed".
+  They now acknowledge first (defer / ack-then-act) and render the panel through
+  the framework's ack-safe edit, so a slow network or cold cache can no longer
+  drop the interaction.
+- **Scam-hunter mass reports are now paced.** A single hunter message naming
+  many users previously fired every clank back-to-back with no spacing; it now
+  runs through the same `BulkRunner` pacing/429-backoff every other mass action
+  uses, so a large report cannot burst past Discord's rate limits.
+- **Per-server role-lock cooldown isolation.** The clanker role-lock enforcement
+  cooldown was keyed by user id alone, so the same account contained in two
+  servers shared one cooldown (one server's enforcement could suppress the
+  other's). It is now keyed per (server, user).
+- **Shared guild-tooling now lives in the framework.** The settings resolver,
+  the paced `BulkRunner`, the permission/invite engine, the per-guild settings
+  validator, and the dynamic-help renderer are no longer duplicated in this repo
+  -- they are consumed from the framework, with only Clankwarden's own feature /
+  field / help-section registries kept here. No user-visible behavior change.
+
 ## [clankwarden] -- 2026-06-08
 
 ### Security audit + fixes

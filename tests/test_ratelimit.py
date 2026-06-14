@@ -6,6 +6,10 @@ import asyncio
 import discord
 import pytest
 
+# clanklib.ratelimit now re-exports the framework's BulkRunner; skip when the
+# framework isn't installed (the deps-only CI job), as the cog tests already do.
+pytest.importorskip("core.framework.guildtools.ratelimit")
+
 from clanklib.ratelimit import BulkRunner, _retry_after
 
 

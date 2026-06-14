@@ -1,6 +1,12 @@
 """Tests for the dynamic help model (clanklib.help)."""
 from __future__ import annotations
 
+import pytest
+
+# clanklib.help now re-exports the framework's help renderer; skip when the
+# framework isn't installed (the deps-only CI job), as the cog tests already do.
+pytest.importorskip("core.framework.guildtools.help")
+
 from clanklib import help as H
 
 

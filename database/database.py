@@ -214,6 +214,10 @@ class PgDatabase:
         # Drop again in case a concurrent read repopulated the entry mid-write.
         self._gs_cache.pop(gid, None)
 
+    def invalidate_settings_cache(self, guild_id: int) -> None:
+        """Drop a guild's cached settings (e.g. after purging it on removal)."""
+        self._gs_cache.pop(int(guild_id), None)
+
     # -- repo accessors --------------------------------------------------------
 
     def _repo(self, name: str, factory):  # type: ignore[no-untyped-def]
