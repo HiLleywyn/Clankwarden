@@ -9537,11 +9537,12 @@ class _ClampSettingsView(discord.ui.LayoutView):
 
     def _make_toggle(self, col: str, default: bool):
         async def _toggle(interaction: discord.Interaction) -> None:
+            await safe_defer(interaction)
             new_val = not bool(self.settings.get(col, default))
             self.settings[col] = new_val
             await self.db.update_guild_setting(self.guild_id, col, new_val)
             self._rebuild()
-            await interaction.response.edit_message(view=self)
+            await safe_edit(interaction, self)
         return _toggle
 
     async def on_timeout(self) -> None:
@@ -10235,15 +10236,18 @@ class _EscapeRoomView(discord.ui.LayoutView):
         wait_until = float(self._data.get("wait_until", 0.0))
         remaining = wait_until - time.time()
         if remaining > 5:
+            # Ack within the 3s window first, then persist. The early-press
+            # counter is cosmetic, so the taunt should land immediately even if
+            # the write lags; a failed save just drops one increment.
             presses = int(self._data.get("early_presses", 0)) + 1
             self._data = {**self._data, "early_presses": presses}
-            await self._cog._er_save(self._uid, self._gid, step_data=self._data)
             mins = max(1, int(remaining / 60))
             taunt = _ER_WAIT_TAUNTS[(presses - 1) % len(_ER_WAIT_TAUNTS)].format(server=self._server_name())
             await interaction.response.send_message(
                 f"{taunt}\n\n-# {mins} minute(s) remaining. The Tank will wait.",
                 ephemeral=True,
             )
+            await self._cog._er_save(self._uid, self._gid, step_data=self._data)
             # Refresh the main embed so the countdown label updates on each press.
             self._rebuild()
             try:

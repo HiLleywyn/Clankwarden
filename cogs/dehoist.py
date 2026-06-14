@@ -29,7 +29,7 @@ from discord.ext import commands
 from clanklib import dehoist as dh
 from clanklib.permissions import ModCog
 from clanklib.ratelimit import BulkRunner
-from core.framework.components import Container, send_v2
+from core.framework.components import Container, safe_defer, safe_edit, send_v2
 from core.framework.context import DiscoContext
 from core.framework.ui import C_ERROR, C_INFO, C_SUCCESS, C_WARNING, C_NAVY
 
@@ -764,28 +764,32 @@ class _DehoistConfig(discord.ui.LayoutView):
         await self.cog.db.update_guild_setting(self.guild.id, key, value)
 
     async def _toggle_enabled(self, interaction: discord.Interaction) -> None:
+        await safe_defer(interaction)
         await self._persist("dehoist_enabled", not bool(self.s.get("dehoist_enabled")))
         self._build()
-        await interaction.response.edit_message(view=self)
+        await safe_edit(interaction, self)
 
     async def _cycle_mode(self, interaction: discord.Interaction) -> None:
+        await safe_defer(interaction)
         cur = _mode_of(self.s)
         nxt = _MODES[(_MODES.index(cur) + 1) % len(_MODES)]
         await self._persist("dehoist_mode", nxt)
         self._build()
-        await interaction.response.edit_message(view=self)
+        await safe_edit(interaction, self)
 
     async def _set_floor(self, interaction: discord.Interaction) -> None:
         role = interaction.data["values"][0]
+        await safe_defer(interaction)
         await self._persist("dehoist_floor_role", int(role))
         self._build()
-        await interaction.response.edit_message(view=self)
+        await safe_edit(interaction, self)
 
     async def _set_channel(self, interaction: discord.Interaction) -> None:
         cid = interaction.data["values"][0]
+        await safe_defer(interaction)
         await self._persist("dehoist_log_channel", int(cid))
         self._build()
-        await interaction.response.edit_message(view=self)
+        await safe_edit(interaction, self)
 
 
 async def setup(bot) -> None:
