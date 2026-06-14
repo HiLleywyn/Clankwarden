@@ -18,6 +18,17 @@
 - **Privacy policy.** Added `docs/PRIVACY.md` describing exactly what is stored,
   why, retention, and these deletion paths.
 
+### Least-privilege gateway intents
+- **Clankwarden now requests only the gateway intents it uses.** `auren.json`
+  declares an explicit `framework.intents` set (`guilds`, `members`,
+  `moderation`, `guild_messages`, `message_content`, `invites`,
+  `auto_moderation_execution`) instead of inheriting the framework's broad
+  moderation-bot default. Unused intents -- `presences` (privileged),
+  `voice_states`, reactions, typing and DM events -- are no longer requested,
+  which shrinks the privileged-intent footprint admins must approve and helps
+  App Directory verification. The set was audited against every gateway
+  listener in the bot; a regression test pins it.
+
 ### Discord-platform reliability + framework alignment
 - **Escape-room interactions are ack-safe.** The Clank Tank escape-room modals
   and the DM-verification button used to do Discord/DB work (a channel message,

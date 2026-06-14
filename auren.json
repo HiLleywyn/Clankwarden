@@ -13,6 +13,17 @@
     "permissions": "1495051398390",
     "scopes": ["bot", "applications.commands"]
   },
+  "framework": {
+    "intents": [
+      "guilds",
+      "members",
+      "moderation",
+      "guild_messages",
+      "message_content",
+      "invites",
+      "auto_moderation_execution"
+    ]
+  },
   "runtime": {
     "dockerfile": "Dockerfile",
     "entrypoint": "main.py"
