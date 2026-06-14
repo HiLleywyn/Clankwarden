@@ -766,6 +766,25 @@ class ModLog(ModCog):
         await send_v2(ctx, Container(accent_color=C_SUCCESS).text(
             f"Removed {n} event(s) older than {days} day(s)."))
 
+    @modlog_grp.command(name="forget", aliases=["erase", "gdpr"])
+    async def modlog_forget(self, ctx: DiscoContext, user: discord.User) -> None:
+        """Erase a user's stored data in this server: containment records,
+        evidence, warnings, dehoist and case data. Honors a data-deletion
+        request. Audit-log entries are kept for chain integrity. Irreversible."""
+        from clanklib.retention import purge_user_data, total_rows
+        counts = await purge_user_data(self.db, user.id, ctx.guild.id)
+        removed = total_rows(counts)
+        await self.logger.config(
+            "config.modlog_forget", ctx.guild.id, actor=ctx.author,
+            summary=f"Erased stored data for user {user.id}: {removed} row(s).",
+        )
+        await send_v2(ctx, Container(accent_color=C_SUCCESS).text(
+            f"## Data erased\n"
+            f"Removed **{removed}** stored row(s) for {user.mention} in this server "
+            f"(containment, evidence, warnings, dehoist and case data).\n"
+            f"-# Audit-log entries are retained for tamper-evident integrity. "
+            f"This cannot be undone."))
+
     @modlog_grp.command(name="verify", aliases=["audit", "integrity"])
     async def modlog_verify(self, ctx: DiscoContext) -> None:
         """Walk the tamper-evident hash chain and report any break."""

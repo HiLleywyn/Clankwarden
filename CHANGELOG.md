@@ -2,6 +2,18 @@
 
 ## [clankwarden] -- 2026-06-14
 
+### Data deletion + retention
+- **Server data is deleted when the bot is removed.** Clankwarden now handles
+  `on_guild_remove`: it purges every stored row for that server (containment
+  records, captured message evidence, warnings, audit log, dehoist, settings)
+  and clears its in-memory state, so a server's data does not outlive the bot's
+  membership.
+- **Erase a user on request.** `.modlog forget @user` deletes a user's stored
+  data in the server (containment, evidence, warnings, dehoist and case data).
+  Tamper-evident audit-log entries are retained for chain integrity.
+- **Privacy policy.** Added `docs/PRIVACY.md` describing exactly what is stored,
+  why, retention, and these deletion paths.
+
 ### Discord-platform reliability + framework alignment
 - **Escape-room interactions are ack-safe.** The Clank Tank escape-room modals
   and the DM-verification button used to do Discord/DB work (a channel message,

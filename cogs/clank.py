@@ -3501,6 +3501,30 @@ class Clanktank(commands.Cog):
     # -- Events ---------------------------------------------------------------
 
     @commands.Cog.listener()
+    async def on_guild_remove(self, guild: discord.Guild) -> None:
+        """Purge this guild's stored data and in-memory state when the bot is
+        removed (Developer Policy: a server's data should not outlive the bot's
+        membership)."""
+        gid = guild.id
+        # Drop in-memory per-guild state so a removed guild leaves nothing behind.
+        self._clanked = {(u, g) for (u, g) in self._clanked if g != gid}
+        self._enforce_ts = {k: v for k, v in self._enforce_ts.items() if k[0] != gid}
+        self._clarion_rate.pop(gid, None)
+        self._legacy_imported.discard(gid)
+        try:
+            from clanklib.retention import purge_guild_data, total_rows
+            counts = await purge_guild_data(self.bot.db, gid)
+            self.bot.db.invalidate_settings_cache(gid)
+            log.info(
+                "clanktank: purged %d row(s) across %d table(s) for removed guild %s",
+                total_rows(counts), len(counts), gid,
+            )
+        except Exception:
+            log.warning(
+                "clanktank: failed to purge data for removed guild %s", gid, exc_info=True,
+            )
+
+    @commands.Cog.listener()
     async def on_member_update(self, before: discord.Member, after: discord.Member) -> None:
         uid, gid = after.id, after.guild.id
         if not await self.is_clanker(uid, gid):
