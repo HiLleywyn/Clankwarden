@@ -11,6 +11,10 @@
 - **Erase a user on request.** `.modlog forget @user` deletes a user's stored
   data in the server (containment, evidence, warnings, dehoist and case data).
   Tamper-evident audit-log entries are retained for chain integrity.
+- **Automatic evidence retention window.** Set `EVIDENCE_RETENTION_DAYS`
+  (default `0` = keep forever) and a daily task deletes stored message evidence
+  (`clanker_evidence`, the only table holding raw message text) older than that,
+  so operators can cap how long captured content is kept.
 - **Privacy policy.** Added `docs/PRIVACY.md` describing exactly what is stored,
   why, retention, and these deletion paths.
 

@@ -15,12 +15,19 @@ from typing import Any
 
 from core.framework.guildtools.retention import (
     ScopedTable,
+    prune_older_than as _prune_older_than,
     purge_guild as _purge_guild,
     purge_user as _purge_user,
     total_rows,
 )
 
-__all__ = ["CLANK_TABLES", "purge_guild_data", "purge_user_data", "total_rows"]
+__all__ = [
+    "CLANK_TABLES",
+    "purge_guild_data",
+    "purge_user_data",
+    "prune_evidence",
+    "total_rows",
+]
 
 
 # Every persisted table that holds guild-scoped (and, where noted, user-scoped)
@@ -71,3 +78,13 @@ async def purge_user_data(
     chain verification from that point)."""
     tables = CLANK_TABLES if include_audit else USER_FORGET_TABLES
     return await _purge_user(db, tables, user_id, guild_id)
+
+
+async def prune_evidence(db: Any, older_than_days: int) -> int:
+    """Enforce a retention window on stored message evidence.
+
+    ``clanker_evidence`` is the only table that keeps raw message *content*, so
+    it is the one with a real privacy cost if kept forever. Delete rows older
+    than ``older_than_days`` (0 = keep forever / retention disabled). Returns the
+    number of rows removed."""
+    return await _prune_older_than(db, "clanker_evidence", "logged_at", older_than_days)

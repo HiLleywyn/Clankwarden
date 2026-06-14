@@ -1291,6 +1291,7 @@ class Clanktank(commands.Cog):
         await self._load_escape_thread_override()
         self._sweep.start()
         self._security_sweep.start()
+        self._retention_sweep.start()
         await self._restore_escape_views()
         log.info("Clanktank ready: %d active clankers %d escape rooms", len(self._clanked), len(self._escape_msg_ids))
 
@@ -1380,6 +1381,7 @@ class Clanktank(commands.Cog):
         self.bot.remove_check(self._global_prefix_check)
         self._sweep.cancel()
         self._security_sweep.cancel()
+        self._retention_sweep.cancel()
 
     # -- Cache ----------------------------------------------------------------
 
@@ -4392,6 +4394,33 @@ class Clanktank(commands.Cog):
 
     @_security_sweep.before_loop
     async def _before_security_sweep(self) -> None:
+        await self.bot.wait_until_ready()
+
+    @tasks.loop(hours=24)
+    async def _retention_sweep(self) -> None:
+        """Enforce the stored-evidence retention window once a day.
+
+        ``EVIDENCE_RETENTION_DAYS`` (operator setting, 0 = keep forever) caps how
+        long captured message content lives in ``clanker_evidence`` -- the only
+        table that holds raw message text."""
+        from clanklib.retention import prune_evidence
+        from clanklib.settings import setting_int
+        days = setting_int(self.bot, "EVIDENCE_RETENTION_DAYS", 0)
+        if days <= 0:
+            return
+        try:
+            removed = await prune_evidence(self.bot.db, days)
+        except Exception:
+            log.warning("clanktank: evidence retention sweep failed", exc_info=True)
+            return
+        if removed:
+            log.info(
+                "clanktank: pruned %d evidence row(s) older than %d day(s)",
+                removed, days,
+            )
+
+    @_retention_sweep.before_loop
+    async def _before_retention_sweep(self) -> None:
         await self.bot.wait_until_ready()
 
     def _pause_dms_memory(self) -> dict[int, datetime]:
