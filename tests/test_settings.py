@@ -8,6 +8,10 @@ from __future__ import annotations
 
 import pytest
 
+# clanklib.settings now re-exports the framework's shared resolver; skip when the
+# framework isn't installed (the deps-only CI job), as the cog tests already do.
+pytest.importorskip("core.framework.guildtools.settings")
+
 from clanklib.settings import prefix, setting, setting_int
 
 

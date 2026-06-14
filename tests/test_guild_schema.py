@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import pytest
 
+# clanklib.guild_schema now re-exports the framework's validation engine; skip
+# when the framework isn't installed (the deps-only CI job), like the cog tests.
+pytest.importorskip("core.framework.guildtools.guild_schema")
+
 from clanklib import guild_schema as gs
 
 
