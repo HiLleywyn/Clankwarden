@@ -26,6 +26,12 @@
   They now acknowledge first (defer / ack-then-act) and render the panel through
   the framework's ack-safe edit, so a slow network or cold cache can no longer
   drop the interaction.
+- **Settings panels are ack-safe too.** The clamp-settings toggles and the
+  smart-dehoist config buttons/selects wrote the new value to the database
+  *before* acknowledging the interaction; they now ack first and re-render
+  through the framework's ack-safe edit, so a slow write no longer surfaces
+  "This interaction failed". The early-press taunt on the escape-room wait
+  button acknowledges before persisting for the same reason.
 - **Scam-hunter mass reports are now paced.** A single hunter message naming
   many users previously fired every clank back-to-back with no spacing; it now
   runs through the same `BulkRunner` pacing/429-backoff every other mass action
