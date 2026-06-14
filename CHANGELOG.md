@@ -29,6 +29,22 @@
   App Directory verification. The set was audited against every gateway
   listener in the bot; a regression test pins it.
 
+### Multi-guild correctness + cleanup
+- **Dehoist no longer leaks across servers.** The message-trigger debounce was
+  keyed by user id alone, so a user active in one server suppressed the dehoist
+  scan for them in every other server for the debounce window. It is now keyed
+  by (server, user).
+- **In-memory state is dropped when the bot leaves a server.** The dehoist
+  signal/debounce caches, the mod-log invite snapshot, and the mod logger's
+  per-guild hash-chain tip, lock and anomaly windows are now cleared on
+  `on_guild_remove`, so nothing for a departed server lingers in memory (a stale
+  invite snapshot could otherwise mis-attribute a later join).
+- **One more ack-safe interaction.** The escape-room education station's
+  wrong-answer button wrote the fail counter to the database before
+  acknowledging; it now acks first, then persists.
+- **Removed a duplicate `.init` helper.** A shadowed copy of the channel-lock
+  routine in the setup wizard was dead code.
+
 ### Discord-platform reliability + framework alignment
 - **Escape-room interactions are ack-safe.** The Clank Tank escape-room modals
   and the DM-verification button used to do Discord/DB work (a channel message,

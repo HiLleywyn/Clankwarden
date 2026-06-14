@@ -38,6 +38,19 @@ def test_event_id_is_prefixed_and_unique() -> None:
     assert a.event_id != b.event_id
 
 
+def test_clear_guild_state_drops_only_that_guild() -> None:
+    import asyncio
+    ml = modlog.ModLogger(bot=None)
+    ml._chain_tip = {1: "tipA", 2: "tipB"}
+    ml._chain_lock = {1: asyncio.Lock(), 2: asyncio.Lock()}
+    ml._windows = {(1, "join"): [1.0], (1, "ban"): [2.0], (2, "join"): [3.0]}
+    ml.clear_guild_state(1)
+    # Guild 1's chain tip, lock, and every anomaly window are gone; guild 2 intact.
+    assert set(ml._chain_tip) == {2}
+    assert set(ml._chain_lock) == {2}
+    assert set(ml._windows) == {(2, "join")}
+
+
 def test_id_coercion_from_objects_and_ints() -> None:
     class _Obj:
         id = 42

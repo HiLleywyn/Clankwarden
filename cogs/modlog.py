@@ -125,6 +125,14 @@ class ModLog(ModCog):
         if invite.guild is not None:
             await self._prime_invites(invite.guild)  # type: ignore[arg-type]
 
+    @commands.Cog.listener()
+    async def on_guild_remove(self, guild: discord.Guild) -> None:
+        # Drop per-guild in-memory state when the bot leaves so a stale invite
+        # snapshot can't mis-attribute a later join and locks/chain tips don't
+        # accumulate. Persisted rows are purged separately by the clank cog.
+        self._invite_cache.pop(guild.id, None)
+        self.logger.clear_guild_state(guild.id)
+
     # -- audit-log actor enrichment -------------------------------------------
 
     async def _audit_actor(self, guild: discord.Guild, action: discord.AuditLogAction,
