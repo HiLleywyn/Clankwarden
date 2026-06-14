@@ -418,54 +418,6 @@ class SetupWizard(ModCog):
             + (f" (stopped early: {result.abort_reason})" if result.aborted else "")
         )
 
-    async def _lock_clanker_out(self, view: InitView, clanker_role: discord.Role,
-                                *, keep_category: discord.CategoryChannel | None) -> None:
-        """Deny the Clanker role View Channel on every existing channel except
-        the containment category we just made, paced to avoid rate limits."""
-        from clanklib.ratelimit import BulkRunner
-
-        keep_ids = set()
-        if keep_category is not None:
-            keep_ids.add(keep_category.id)
-            keep_ids.update(c.id for c in keep_category.channels)
-
-        deny = discord.PermissionOverwrite(view_channel=False)
-        reason = f"Clankwarden .init: lock Clanker out (by {view.ctx.author})"
-
-        # Only touch categories and channels that aren't already synced to a
-        # category we'll handle -- minimizes API calls on big servers.
-        targets: list[discord.abc.GuildChannel] = []
-        for ch in view.guild.channels:
-            if ch.id in keep_ids:
-                continue
-            if isinstance(ch, discord.CategoryChannel):
-                targets.append(ch)
-            elif getattr(ch, "permissions_synced", False):
-                continue  # inherits its category's overwrite
-            else:
-                targets.append(ch)
-
-        async def _lock_one(ch: discord.abc.GuildChannel) -> None:
-            await ch.set_permissions(clanker_role, overwrite=deny, reason=reason)
-            view.created.locked.append(ch.id)
-
-        total = len(targets)
-        await view.update_running(
-            f"Locking the Clanker role out of {total} channel(s) (paced ~0.7s each, "
-            f"~{max(1, round(total * 0.7 / 60))} min). 0/{total}.")
-
-        async def _prog(res) -> None:
-            await view.update_running(
-                f"Locking the Clanker role out of channels... "
-                f"{res.processed}/{res.total} done.")
-
-        result = await BulkRunner(base_delay=0.7).run(
-            targets, _lock_one, progress=_prog, progress_every=15)
-        view.summary_lines.append(
-            f"Locked the Clanker role out of {result.succeeded} existing channel(s)"
-            + (f" (stopped early: {result.abort_reason})" if result.aborted else "")
-        )
-
     async def revert(self, view: InitView) -> None:
         """Delete exactly what this run created and clear the settings it wrote."""
         guild = view.guild

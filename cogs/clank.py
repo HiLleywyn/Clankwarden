@@ -9967,12 +9967,14 @@ class _EscapeRoomView(discord.ui.LayoutView):
                     pass
                 return
             self._data = {**self._data, "edu_fails": fails}
-            await self._cog._er_save(self._uid, self._gid, step_data=self._data, level=self._level)
+            # Ack inside the 3s window before persisting: the counter lives in
+            # memory, so the reply does not need the DB write to land first.
             await interaction.response.send_message(
                 f"Not quite -- re-read the **Do / Do not** list above. "
                 f"({3 - fails} attempt(s) left before you escalate a level)",
                 ephemeral=True,
             )
+            await self._cog._er_save(self._uid, self._gid, step_data=self._data, level=self._level)
         return _cb
 
     # ── Station 0: Intake ─────────────────────────────────────────────────

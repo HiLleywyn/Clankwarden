@@ -292,6 +292,17 @@ class ModLogger:
             self._chain_lock[guild_id] = lock
         return lock
 
+    def clear_guild_state(self, guild_id: int) -> None:
+        """Forget all per-guild in-memory state for a guild the bot has left.
+
+        The persisted ``mod_log_events`` rows are deleted by the data-retention
+        purge; this just releases the cached chain tip, the per-guild lock, and
+        the anomaly-detection windows so they do not outlive the membership.
+        """
+        self._chain_tip.pop(guild_id, None)
+        self._chain_lock.pop(guild_id, None)
+        self._windows = {k: v for k, v in self._windows.items() if k[0] != guild_id}
+
     @property
     def db(self) -> Any:
         return getattr(self.bot, "db", None)

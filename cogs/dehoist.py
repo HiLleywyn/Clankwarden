@@ -67,8 +67,10 @@ class SmartDehoist(ModCog):
         self.bot = bot
         # guild_id -> (computed_at, GuildSignals)
         self._sig_cache: dict[int, tuple[float, dh.GuildSignals]] = {}
-        # user_id -> last message-triggered check (debounce, dodge rate limits)
-        self._debounce: dict[int, float] = {}
+        # (guild_id, user_id) -> last message-triggered check (debounce, dodge
+        # rate limits). Keyed by guild as well so a user's activity in one
+        # server cannot suppress the dehoist scan for them in another.
+        self._debounce: dict[tuple[int, int], float] = {}
 
     # -- shared accessors -----------------------------------------------------
 
@@ -249,13 +251,20 @@ class SmartDehoist(ModCog):
     async def on_message(self, message: discord.Message) -> None:
         if message.guild is None or message.author.bot or message.webhook_id:
             return
-        uid = message.author.id
+        key = (message.guild.id, message.author.id)
         now = time.time()
-        if now - self._debounce.get(uid, 0.0) < _MSG_DEBOUNCE:
+        if now - self._debounce.get(key, 0.0) < _MSG_DEBOUNCE:
             return
-        self._debounce[uid] = now
+        self._debounce[key] = now
         if isinstance(message.author, discord.Member):
             await self._handle(message.author, trigger="message")
+
+    @commands.Cog.listener()
+    async def on_guild_remove(self, guild: discord.Guild) -> None:
+        # Drop per-guild in-memory state so it does not outlive the membership.
+        gid = guild.id
+        self._sig_cache.pop(gid, None)
+        self._debounce = {k: v for k, v in self._debounce.items() if k[0] != gid}
 
     # -- commands: .dehoist group (mod-gated by ModCog) -----------------------
 
