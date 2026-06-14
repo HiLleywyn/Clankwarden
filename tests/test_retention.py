@@ -51,6 +51,23 @@ async def test_guild_purge_scopes_every_table_to_guild():
 
 
 @pytest.mark.asyncio
+async def test_prune_evidence_targets_clanker_evidence_by_age():
+    db = _FakeDB()
+    await R.prune_evidence(db, 90)
+    assert len(db.calls) == 1
+    sql, args = db.calls[0]
+    assert "DELETE FROM clanker_evidence" in sql and "logged_at < NOW()" in sql
+    assert args == ("90 days",)
+
+
+@pytest.mark.asyncio
+async def test_prune_evidence_disabled_keeps_everything():
+    db = _FakeDB()
+    assert await R.prune_evidence(db, 0) == 0      # 0 days = retention disabled
+    assert db.calls == []
+
+
+@pytest.mark.asyncio
 async def test_user_forget_retains_audit_chain_by_default():
     db = _FakeDB()
     counts = await R.purge_user_data(db, user_id=5, guild_id=99)

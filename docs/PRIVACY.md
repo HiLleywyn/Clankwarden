@@ -38,10 +38,12 @@ request `presences`.
   data-deletion paths below.
 - **When the bot is removed from a server, all of that server's data is
   deleted automatically** (`on_guild_remove` -> `clanklib.retention.purge_guild_data`).
-
-A scheduled/automatic retention window for `clanker_evidence` and
-`mod_log_events` is a planned addition; until then, retention is operator-driven
-via the commands above plus the automatic on-removal purge.
+- **Stored message evidence has an automatic retention window.** Set
+  `EVIDENCE_RETENTION_DAYS` (operator setting; `0` = keep forever) and a daily
+  task deletes `clanker_evidence` rows -- the only ones holding raw message
+  text -- older than that. Off by default so no existing deployment silently
+  loses moderation evidence; operators turn it on to cap how long content is
+  kept.
 
 ## Deletion (your rights)
 
