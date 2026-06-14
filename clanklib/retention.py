@@ -26,6 +26,7 @@ __all__ = [
     "purge_guild_data",
     "purge_user_data",
     "prune_evidence",
+    "prune_mod_log",
     "total_rows",
 ]
 
@@ -83,8 +84,20 @@ async def purge_user_data(
 async def prune_evidence(db: Any, older_than_days: int) -> int:
     """Enforce a retention window on stored message evidence.
 
-    ``clanker_evidence`` is the only table that keeps raw message *content*, so
-    it is the one with a real privacy cost if kept forever. Delete rows older
-    than ``older_than_days`` (0 = keep forever / retention disabled). Returns the
-    number of rows removed."""
+    ``clanker_evidence`` keeps raw message *content* captured at containment
+    time, so it has a real privacy cost if kept forever. Delete rows older than
+    ``older_than_days`` (0 = keep forever / retention disabled). Returns the
+    number of rows removed. The audit log keeps message text too; see
+    :func:`prune_mod_log`."""
     return await _prune_older_than(db, "clanker_evidence", "logged_at", older_than_days)
+
+
+async def prune_mod_log(db: Any, older_than_days: int) -> int:
+    """Enforce a retention window on the mod-log audit table.
+
+    ``mod_log_events`` records message deletes/edits with the message text in
+    its metadata, so the audit chain also accumulates raw content. Delete rows
+    older than ``older_than_days`` (0 = keep forever / retention disabled).
+    Pruning the oldest rows preserves the chain from the cut point forward;
+    ``.modlog verify`` validates the retained tail. Returns rows removed."""
+    return await _prune_older_than(db, "mod_log_events", "created_at", older_than_days)

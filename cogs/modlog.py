@@ -12,8 +12,10 @@ but not posted.
 """
 from __future__ import annotations
 
+import logging
+
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 
 from typing import Union
 
@@ -32,6 +34,8 @@ from clanklib.permissions import ModCog
 from core.framework.components import Container, send_v2
 from core.framework.context import DiscoContext
 from core.framework.ui import C_ERROR, C_INFO, C_NAVY, C_SUCCESS
+
+log = logging.getLogger(__name__)
 
 
 def _chan(guild: discord.Guild, cid) -> str:
@@ -53,6 +57,38 @@ class ModLog(ModCog):
         # Per-guild snapshot of invite uses, so a join can be attributed to the
         # invite that incremented: {guild_id: {code: uses}}.
         self._invite_cache: dict[int, dict[str, int]] = {}
+
+    async def cog_load(self) -> None:
+        self._retention_sweep.start()
+
+    def cog_unload(self) -> None:
+        self._retention_sweep.cancel()
+
+    @tasks.loop(hours=24)
+    async def _retention_sweep(self) -> None:
+        """Enforce the audit-log retention window once a day.
+
+        ``mod_log_events`` records message deletes/edits with the message text
+        in its metadata, so the audit log accumulates raw content like
+        ``clanker_evidence`` does. ``MOD_LOG_RETENTION_DAYS`` (operator setting,
+        0 = keep forever) caps how long it lives; pruning the oldest rows keeps
+        the tail of the tamper-evident chain intact for ``.modlog verify``."""
+        from clanklib.retention import prune_mod_log
+        from clanklib.settings import setting_int
+        days = setting_int(self.bot, "MOD_LOG_RETENTION_DAYS", 0)
+        if days <= 0:
+            return
+        try:
+            removed = await prune_mod_log(self.bot.db, days)
+        except Exception:
+            log.warning("modlog: audit retention sweep failed", exc_info=True)
+            return
+        if removed:
+            log.info("modlog: pruned %d audit row(s) older than %d day(s)", removed, days)
+
+    @_retention_sweep.before_loop
+    async def _before_retention_sweep(self) -> None:
+        await self.bot.wait_until_ready()
 
     # -- invite tracking ------------------------------------------------------
 

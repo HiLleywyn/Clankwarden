@@ -68,6 +68,23 @@ async def test_prune_evidence_disabled_keeps_everything():
 
 
 @pytest.mark.asyncio
+async def test_prune_mod_log_targets_mod_log_events_by_age():
+    db = _FakeDB()
+    await R.prune_mod_log(db, 30)
+    assert len(db.calls) == 1
+    sql, args = db.calls[0]
+    assert "DELETE FROM mod_log_events" in sql and "created_at < NOW()" in sql
+    assert args == ("30 days",)
+
+
+@pytest.mark.asyncio
+async def test_prune_mod_log_disabled_keeps_everything():
+    db = _FakeDB()
+    assert await R.prune_mod_log(db, 0) == 0       # 0 days = retention disabled
+    assert db.calls == []
+
+
+@pytest.mark.asyncio
 async def test_user_forget_retains_audit_chain_by_default():
     db = _FakeDB()
     counts = await R.purge_user_data(db, user_id=5, guild_id=99)

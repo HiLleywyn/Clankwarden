@@ -29,6 +29,22 @@
   App Directory verification. The set was audited against every gateway
   listener in the bot; a regression test pins it.
 
+### Data retention + privacy accuracy
+- **The moderation audit log now has a retention window.** `mod_log_events`
+  records deleted/edited message text in its metadata, so -- like
+  `clanker_evidence` -- it accumulates raw content. Set `MOD_LOG_RETENTION_DAYS`
+  (operator setting; `0` = keep forever) and a daily task in the mod-log cog
+  deletes audit rows older than that, pruning the oldest first so the tail of
+  the tamper-evident chain stays verifiable.
+- **Privacy policy corrected to match behaviour.** `docs/PRIVACY.md` now
+  discloses that the audit log stores deleted/edited message text and that
+  dehoist events store the name before/after, drops an inaccurate claim that
+  message content was only ever stored at containment time, documents the new
+  audit retention window, and clarifies that per-user deletion is per server.
+- **Added a Terms of Service** (`docs/TERMS.md`) covering acceptable use, the
+  data handling, no-warranty and liability terms -- the second document Discord
+  expects alongside a privacy policy for a verified, data-processing app.
+
 ### Multi-guild correctness + cleanup
 - **Dehoist no longer leaks across servers.** The message-trigger debounce was
   keyed by user id alone, so a user active in one server suppressed the dehoist
